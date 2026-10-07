@@ -20,7 +20,7 @@ func planCmd(ctx context.Context, args []string) error {
 	cfgPath := fs.String("config", "", "project config (default: bonsai.yml if present, else built-in defaults)")
 	asJSON := fs.Bool("json", false, "print the plan as JSON")
 	all := fs.Bool("all", false, "list every table, including empty ones")
-	if err := fs.Parse(reorder(args)); err != nil {
+	if err := fs.Parse(reorder(fs, args)); err != nil {
 		return err
 	}
 	dir := "work"

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ const usage = `Usage:
   bonsai index     <dump> [-out work/]
   bonsai inspect   [work/]
   bonsai plan      [work/] [-config bonsai.yml] [-json] [-all]
+  bonsai build     <dump> [-config bonsai.yml] [-out slim.sql] [-work work/] [-keep-work]
   bonsai roundtrip <dump> [-o out.sql] [-max-insert-bytes N]
 
 Commands:
@@ -21,6 +23,9 @@ Commands:
   inspect     Print the inventory of an index as JSON.
   plan        Build the keep set from the index and a config, and estimate
               the output size. Writes nothing.
+  build       Pass 1 if the work directory has no index of this dump, then
+              plan and pass 2. Writes the slim dump. Deletes the index
+              afterwards unless -keep-work is set.
   roundtrip   Parse a dump and write it back out. With -max-insert-bytes 0 the
               output must match the input byte for byte. Prints statistics.
 
@@ -41,6 +46,8 @@ func main() {
 		err = indexCmd(ctx, os.Args[2:])
 	case "inspect":
 		err = inspectCmd(ctx, os.Args[2:])
+	case "build":
+		err = buildCmd(ctx, os.Args[2:])
 	case "plan":
 		err = planCmd(ctx, os.Args[2:])
 	case "roundtrip":
@@ -59,20 +66,29 @@ func main() {
 }
 
 // reorder moves flags in front of positional arguments, so that
-// "bonsai index dump.sql -out work" works.
-func reorder(args []string) []string {
+// "bonsai index dump.sql -out work" works. Boolean flags take no value.
+func reorder(fs *flag.FlagSet, args []string) []string {
 	var flags, pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if strings.HasPrefix(a, "-") {
-			flags = append(flags, a)
-			if !strings.Contains(a, "=") && i+1 < len(args) {
-				flags = append(flags, args[i+1])
-				i++
-			}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			pos = append(pos, a)
 			continue
 		}
-		pos = append(pos, a)
+		flags = append(flags, a)
+		name := strings.TrimLeft(a, "-")
+		if strings.Contains(name, "=") {
+			continue
+		}
+		if f := fs.Lookup(name); f != nil {
+			if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+				continue
+			}
+		}
+		if i+1 < len(args) {
+			flags = append(flags, args[i+1])
+			i++
+		}
 	}
 	return append(flags, pos...)
 }

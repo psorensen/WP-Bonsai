@@ -171,7 +171,7 @@ func TestParseItems(t *testing.T) {
 		{Row, 0, `q"t`, "(1)"},
 		{InsertEnd, 0, `q"t`, "ON DUPLICATE KEY UPDATE a=1"},
 		{Statement, StmtDelimiter, "", "DELIMITER ;;"},
-		{Statement, StmtOther, "", "CREATE TRIGGER x BEFORE INSERT ON t FOR EACH ROW BEGIN SET @a = 1; END;;"},
+		{Statement, StmtCreateTrigger, "t", "CREATE TRIGGER x BEFORE INSERT ON t FOR EACH ROW BEGIN SET @a = 1; END;;"},
 		{InsertHeader, 0, "t", ""},
 		{Row, 0, "t", "(1)"},
 		{Row, 0, "t", "(2)"},
@@ -364,6 +364,29 @@ func BenchmarkParse(b *testing.B) {
 				}
 				b.Fatal(err)
 			}
+		}
+	}
+}
+
+func TestClassifyTables(t *testing.T) {
+	cases := []struct {
+		body  string
+		typ   StmtType
+		table string
+	}{
+		{"LOCK TABLES `wp_2_posts` WRITE;", StmtLockTables, "wp_2_posts"},
+		{"/*!40000 ALTER TABLE `wp_2_posts` DISABLE KEYS */;", StmtAlterTable, "wp_2_posts"},
+		{"ALTER TABLE wp_x ADD KEY a (a);", StmtAlterTable, "wp_x"},
+		{"/*!50003 CREATE*/ /*!50017 DEFINER=`root`@`localhost`*/ /*!50003 TRIGGER t1 BEFORE UPDATE ON `wp_2_posts` FOR EACH ROW BEGIN SET NEW.a = 1; END */;;", StmtCreateTrigger, "wp_2_posts"},
+		{"CREATE TRIGGER t2 AFTER INSERT ON db.wp_y FOR EACH ROW SET @a = 1;", StmtCreateTrigger, "wp_y"},
+		{"/*!40101 SET NAMES utf8mb4 */;", StmtOther, ""},
+		{"/*!40000 ALTER TABLE `t` ENABLE KEYS */;", StmtAlterTable, "t"},
+		{"CREATE TABLE `t` (`a` int);", StmtCreateTable, "t"},
+	}
+	for _, c := range cases {
+		typ, table := classify([]byte(c.body))
+		if typ != c.typ || table != c.table {
+			t.Errorf("classify(%q) = %d %q, want %d %q", c.body, typ, table, c.typ, c.table)
 		}
 	}
 }

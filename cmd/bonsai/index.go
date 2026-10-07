@@ -16,7 +16,7 @@ import (
 func indexCmd(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	out := fs.String("out", "work", "work directory for the index")
-	if err := fs.Parse(reorder(args)); err != nil {
+	if err := fs.Parse(reorder(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -33,18 +33,7 @@ func indexCmd(ctx context.Context, args []string) error {
 	defer d.Close()
 
 	path := filepath.Join(*out, index.FileName)
-	start := time.Now()
-	progress := func(int64) {
-		read := d.FileRead()
-		elapsed := time.Since(start).Seconds()
-		rate := float64(read) / (1 << 20) / elapsed
-		pct := 100 * float64(read) / float64(d.Size)
-		eta := ""
-		if rate > 0 && read < d.Size {
-			eta = fmt.Sprintf(", about %s left", (time.Duration(float64(d.Size-read)/(1<<20)/rate) * time.Second).Round(time.Second))
-		}
-		fmt.Fprintf(os.Stderr, "\rpass 1: %5.1f%% of %s, %.0f MB/s%s   ", pct, mb(d.Size), rate, eta)
-	}
+	progress := progressPrinter("pass 1", d, time.Now())
 	sum, err := index.Build(ctx, d, path, index.Source{Path: d.Path, Size: d.Size, ModTime: d.ModTime}, index.Options{Progress: progress})
 	fmt.Fprintln(os.Stderr)
 	if err != nil {

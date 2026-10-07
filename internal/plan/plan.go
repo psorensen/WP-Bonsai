@@ -77,6 +77,7 @@ type ReasonCount struct {
 type TablePlan struct {
 	Name     string `json:"name"`
 	Site     int    `json:"site,omitempty"`
+	Role     string `json:"role,omitempty"` // core table role, such as postmeta
 	Rule     Rule   `json:"rule"`
 	Rows     int64  `json:"rows"`
 	KeptRows int64  `json:"kept_rows"`
@@ -738,7 +739,7 @@ func (b *builder) tables() {
 			b.err = fmt.Errorf("config: %w", err)
 			return
 		}
-		tp := TablePlan{Name: x.info.name, Site: x.info.site, Rule: rule, Rows: x.rows}
+		tp := TablePlan{Name: x.info.name, Site: x.info.site, Role: x.info.role, Rule: rule, Rows: x.rows}
 		switch rule.Action {
 		case ActionCore:
 			if q, ok := coreEstimates[x.info.role]; ok {

@@ -414,8 +414,8 @@ func (g *gen) writeDump() {
 		w.WriteString("UNLOCK TABLES;\n")
 		g.stats[t.name] = len(t.rows)
 
-		if g.o.Triggers && t.name == prefix+"posts" {
-			w.WriteString(triggerSQL)
+		if g.o.Triggers && strings.HasSuffix(t.name, "posts") {
+			w.WriteString(strings.ReplaceAll(triggerSQL, "wp_posts", t.name))
 		}
 	}
 

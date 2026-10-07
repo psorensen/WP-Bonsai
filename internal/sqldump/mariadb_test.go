@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/psorensen/WP-Bonsai/internal/mariadbtest"
 	"github.com/psorensen/WP-Bonsai/internal/synth"
 )
 
@@ -21,10 +19,8 @@ import (
 //
 // It needs Docker and runs only when BONSAI_MARIADB=1.
 func TestMariaDBRoundTrip(t *testing.T) {
-	if os.Getenv("BONSAI_MARIADB") != "1" {
-		t.Skip("set BONSAI_MARIADB=1 to run the MariaDB round-trip test (needs Docker)")
-	}
-	db := startMariaDB(t)
+	mariadbtest.Skip(t)
+	db := mariadbtest.Start(t)
 
 	fixture, err := os.ReadFile("../../testdata/edge-cases.sql")
 	if err != nil {
@@ -71,18 +67,18 @@ func TestMariaDBRoundTrip(t *testing.T) {
 
 			orig := fmt.Sprintf("orig_%d", i)
 			copy := fmt.Sprintf("copy_%d", i)
-			db.importDump(t, orig, c.input)
-			db.importDump(t, copy, out.Bytes())
+			db.Import(t, orig, c.input)
+			db.Import(t, copy, out.Bytes())
 
-			origTables := db.query(t, "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='"+orig+"' ORDER BY 1")
-			copyTables := db.query(t, "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='"+copy+"' ORDER BY 1")
+			origTables := db.Query(t, "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='"+orig+"' ORDER BY 1")
+			copyTables := db.Query(t, "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='"+copy+"' ORDER BY 1")
 			if origTables != copyTables {
 				t.Fatalf("tables differ:\n%s\nvs\n%s", origTables, copyTables)
 			}
 			for _, kind := range []string{"routines", "triggers"} {
 				col := map[string]string{"routines": "routine_schema", "triggers": "trigger_schema"}[kind]
-				a := db.query(t, fmt.Sprintf("SELECT COUNT(*) FROM information_schema.%s WHERE %s='%s'", kind, col, orig))
-				b := db.query(t, fmt.Sprintf("SELECT COUNT(*) FROM information_schema.%s WHERE %s='%s'", kind, col, copy))
+				a := db.Query(t, fmt.Sprintf("SELECT COUNT(*) FROM information_schema.%s WHERE %s='%s'", kind, col, orig))
+				b := db.Query(t, fmt.Sprintf("SELECT COUNT(*) FROM information_schema.%s WHERE %s='%s'", kind, col, copy))
 				if a != b {
 					t.Errorf("%s: %s in original, %s in copy", kind, a, b)
 				}
@@ -96,8 +92,8 @@ func TestMariaDBRoundTrip(t *testing.T) {
 				}
 				q := func(schema string) string {
 					tbl := "`" + schema + "`.`" + strings.ReplaceAll(name, "`", "``") + "`"
-					count := db.query(t, "SELECT COUNT(*) FROM "+tbl)
-					sum := db.query(t, "CHECKSUM TABLE "+tbl+" EXTENDED")
+					count := db.Query(t, "SELECT COUNT(*) FROM "+tbl)
+					sum := db.Query(t, "CHECKSUM TABLE "+tbl+" EXTENDED")
 					_, sum, _ = strings.Cut(sum, "\t")
 					return count + " rows, checksum " + sum
 				}
@@ -115,57 +111,4 @@ func TestMariaDBRoundTrip(t *testing.T) {
 			t.Logf("%d tables, %d rows match", strings.Count(origTables, "\n")+1, total)
 		})
 	}
-}
-
-type mariaDB struct{ id string }
-
-func startMariaDB(t *testing.T) *mariaDB {
-	t.Helper()
-	out, err := exec.Command("docker", "run", "-d", "--rm",
-		"-e", "MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1", "mariadb:11.4").Output()
-	if err != nil {
-		t.Fatalf("docker run: %v", err)
-	}
-	db := &mariaDB{id: strings.TrimSpace(string(out))}
-	t.Cleanup(func() { exec.Command("docker", "rm", "-f", db.id).Run() })
-
-	deadline := time.Now().Add(2 * time.Minute)
-	for {
-		err := exec.Command("docker", "exec", db.id, "healthcheck.sh", "--connect", "--innodb_initialized").Run()
-		if err == nil {
-			return db
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("MariaDB did not start: %v", err)
-		}
-		time.Sleep(time.Second)
-	}
-}
-
-func (db *mariaDB) importDump(t *testing.T, schema string, dump []byte) {
-	t.Helper()
-	db.query(t, "CREATE DATABASE `"+schema+"`")
-	path := filepath.Join(t.TempDir(), schema+".sql")
-	if err := os.WriteFile(path, dump, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	cmd := exec.Command("docker", "exec", "-i", db.id, "mariadb", "-uroot", schema)
-	cmd.Stdin = f
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("import into %s: %v\n%s", schema, err, out)
-	}
-}
-
-func (db *mariaDB) query(t *testing.T, sql string) string {
-	t.Helper()
-	out, err := exec.Command("docker", "exec", db.id, "mariadb", "-uroot", "-N", "-B", "-e", sql).CombinedOutput()
-	if err != nil {
-		t.Fatalf("query %q: %v\n%s", sql, err, out)
-	}
-	return strings.TrimRight(string(out), "\n")
 }

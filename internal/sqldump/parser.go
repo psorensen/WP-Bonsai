@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 )
 
@@ -61,6 +62,12 @@ const (
 	StmtInsert
 	// StmtDelimiter is a client DELIMITER command.
 	StmtDelimiter
+	// StmtLockTables is LOCK TABLES. Table is the first table locked.
+	StmtLockTables
+	// StmtAlterTable is ALTER TABLE, such as mysqldump's DISABLE KEYS lines.
+	StmtAlterTable
+	// StmtCreateTrigger is CREATE TRIGGER. Table is the table it fires on.
+	StmtCreateTrigger
 )
 
 // FieldType says how a value in a row tuple is written.
@@ -873,12 +880,9 @@ func classify(body []byte) (StmtType, string) {
 	t := tokens{b: body}
 	switch t.word() {
 	case "CREATE":
-		w := t.word()
-		if w == "TEMPORARY" || w == "OR" {
-			return StmtOther, ""
-		}
-		if w != "TABLE" {
-			return StmtOther, ""
+		if t.word() != "TABLE" {
+			// CREATE TEMPORARY TABLE, CREATE TRIGGER, CREATE VIEW, and so on.
+			break
 		}
 		if t.peekWord() == "IF" {
 			t.word() // IF
@@ -899,9 +903,29 @@ func classify(body []byte) (StmtType, string) {
 			t.word() // EXISTS
 		}
 		return StmtDropTable, t.ident()
+	case "LOCK":
+		if w := t.word(); w == "TABLES" || w == "TABLE" {
+			return StmtLockTables, t.ident()
+		}
+	case "ALTER":
+		w := t.word()
+		if w == "ONLINE" || w == "IGNORE" {
+			w = t.word()
+		}
+		if w == "TABLE" {
+			return StmtAlterTable, t.ident()
+		}
+	}
+	if m := triggerRe.FindSubmatch(body); m != nil {
+		t := tokens{b: m[1]}
+		return StmtCreateTrigger, t.ident()
 	}
 	return StmtOther, ""
 }
+
+// triggerRe finds the table of a CREATE TRIGGER statement, including the
+// form mysqldump writes inside executable comments.
+var triggerRe = regexp.MustCompile("(?is)^\\s*(?:/\\*M?!\\d*\\s*)?CREATE\\b.*?\\bTRIGGER\\s+\\S+\\s+(?:BEFORE|AFTER)\\s+(?:INSERT|UPDATE|DELETE)\\s+ON\\s+((?:`(?:[^`]|``)+`|\\w+)(?:\\s*\\.\\s*(?:`(?:[^`]|``)+`|\\w+))?)")
 
 // tokens is a small reader for the start of an in-memory statement.
 type tokens struct {
@@ -915,6 +939,15 @@ func (t *tokens) skip() {
 		switch {
 		case isSpace(c):
 			t.i++
+		case bytes.HasPrefix(t.b[t.i:], []byte("/*!")) || bytes.HasPrefix(t.b[t.i:], []byte("/*M!")):
+			// An executable comment: skip only its opener and version,
+			// and read what is inside as SQL.
+			t.i = bytes.IndexByte(t.b[t.i:], '!') + t.i + 1
+			for t.i < len(t.b) && isDigit(t.b[t.i]) {
+				t.i++
+			}
+		case c == '*' && t.i+1 < len(t.b) && t.b[t.i+1] == '/':
+			t.i += 2
 		case c == '/' && t.i+1 < len(t.b) && t.b[t.i+1] == '*':
 			end := bytes.Index(t.b[t.i+2:], []byte("*/"))
 			if end < 0 {

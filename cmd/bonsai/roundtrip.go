@@ -15,7 +15,7 @@ func roundtrip(args []string) error {
 	fs := flag.NewFlagSet("roundtrip", flag.ExitOnError)
 	out := fs.String("o", "", "write the output to this file (default: discard)")
 	max := fs.Int("max-insert-bytes", 0, "regroup INSERT rows into statements of about this size; 0 copies the input unchanged")
-	if err := fs.Parse(reorder(args)); err != nil {
+	if err := fs.Parse(reorder(fs, args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

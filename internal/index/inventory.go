@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2" // registers the "duckdb" driver
 )
@@ -37,6 +38,28 @@ func CheckVersion(db *sql.DB, schema string) error {
 		return fmt.Errorf("index has schema version %s, this bonsai needs %s; run bonsai index again", v, schemaVersion)
 	}
 	return nil
+}
+
+// ReadSource returns the dump an index was built from.
+func ReadSource(db *sql.DB) (Source, error) {
+	var src Source
+	var size, mtime string
+	if err := db.QueryRow(`SELECT
+			coalesce(max(value) FILTER (WHERE key = 'source_path'), ''),
+			coalesce(max(value) FILTER (WHERE key = 'source_size'), ''),
+			coalesce(max(value) FILTER (WHERE key = 'source_mtime'), '')
+		FROM info`).Scan(&src.Path, &size, &mtime); err != nil {
+		return src, err
+	}
+	src.Size, _ = strconv.ParseInt(size, 10, 64)
+	src.ModTime, _ = time.Parse(time.RFC3339, mtime)
+	return src, nil
+}
+
+// Matches reports whether an index source describes the same file as s,
+// by size and modification time to the second.
+func (s Source) Matches(o Source) bool {
+	return s.Size == o.Size && s.ModTime.UTC().Truncate(time.Second).Equal(o.ModTime.UTC().Truncate(time.Second))
 }
 
 // Inventory is what a dump contains, as bonsai inspect prints it.
