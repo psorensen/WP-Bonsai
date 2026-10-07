@@ -95,7 +95,6 @@ var (
 	// followedMetaKeys are post meta keys whose values hold post IDs.
 	followedMetaKeys = []string{
 		"_thumbnail_id",
-		"_menu_item_object_id",
 		"_product_image_gallery",
 		"_upsell_ids",
 		"_crosssell_ids",
@@ -451,12 +450,21 @@ func (b *builder) seedPerTerm(siteID int, typ, tax string, pick config.TaxonomyP
 	if !pick.MaxTerms.All {
 		limit = fmt.Sprintf("LIMIT %d", pick.MaxTerms.N)
 	}
+	// Terms the site's menus link to, when the config includes them.
+	menuTerms := "SELECT NULL::BIGINT AS term_taxonomy_id WHERE false"
+	if pick.IncludeMenuTerms != nil && *pick.IncludeMenuTerms {
+		menuTerms = `SELECT tt.term_taxonomy_id FROM ix.term_taxonomy tt
+			JOIN ix.menu_meta o ON o.site = tt.site AND o.meta_key = '_menu_item_object_id' AND TRY_CAST(o.value AS BIGINT) = tt.term_id
+			JOIN ix.menu_meta ty ON ty.site = o.site AND ty.post_id = o.post_id AND ty.meta_key = '_menu_item_type' AND ty.value = 'taxonomy'
+			JOIN ix.menu_meta ob ON ob.site = o.site AND ob.post_id = o.post_id AND ob.meta_key = '_menu_item_object' AND ob.value = $3
+			WHERE tt.site = $1 AND tt.taxonomy = $3`
+	}
 	b.exec(fmt.Sprintf(`INSERT INTO seed
 		WITH eligible AS (
 			SELECT id, date FROM ix.posts WHERE site = $1 AND type = $2 AND status IN (%[1]s)
 		), rel AS (
 			SELECT object_id, term_taxonomy_id FROM ix.term_relationships WHERE site = $1
-		), chosen AS (
+		), top_terms AS (
 			SELECT tt.term_taxonomy_id
 			FROM ix.term_taxonomy tt
 			JOIN (SELECT r.term_taxonomy_id, count(*) AS n
@@ -465,13 +473,17 @@ func (b *builder) seedPerTerm(siteID int, typ, tax string, pick config.TaxonomyP
 			LEFT JOIN ix.terms t ON t.site = $1 AND t.term_id = tt.term_id
 			WHERE tt.site = $1 AND tt.taxonomy = $3
 			ORDER BY %[2]s %[3]s
+		), chosen AS (
+			SELECT term_taxonomy_id FROM top_terms
+			UNION
+			%[5]s
 		)
 		SELECT $1, id, $4 FROM (
 			SELECT e.id, row_number() OVER (PARTITION BY r.term_taxonomy_id ORDER BY e.date DESC NULLS LAST, e.id DESC) AS rn
 			FROM rel r
 			JOIN chosen USING (term_taxonomy_id)
 			JOIN eligible e ON e.id = r.object_id
-		) WHERE rn <= %[4]d`, inStatus, order, limit, perTerm), siteID, typ, tax, reason)
+		) WHERE rn <= %[4]d`, inStatus, order, limit, perTerm, menuTerms), siteID, typ, tax, reason)
 }
 
 // --- step 2: dependencies ---
@@ -494,6 +506,14 @@ func (b *builder) dependencies() {
 		FROM (
 			SELECT m.site, m.post_id AS src, m.ref_id AS dst, f.reason
 				FROM ix.meta_refs m JOIN follow_keys f ON f.site = m.site AND f.meta_key = m.meta_key
+			UNION ALL
+			-- Menu items that link to a post. Items that link to a term or a
+			-- URL hold no post ID, even though their object ID is a number.
+			SELECT o.site, o.post_id, TRY_CAST(o.value AS BIGINT), 'menu:target'
+				FROM ix.menu_meta o
+				JOIN ix.menu_meta t ON t.site = o.site AND t.post_id = o.post_id
+					AND t.meta_key = '_menu_item_type' AND t.value = 'post_type'
+				WHERE o.meta_key = '_menu_item_object_id' AND o.%[1]s
 			UNION ALL
 			SELECT site, post_id, ref_id, 'content:' || source FROM ix.content_refs WHERE %[1]s
 			UNION ALL
@@ -520,7 +540,7 @@ func (b *builder) dependencies() {
 	// Some references are followed past the depth limit, because the site
 	// breaks without them: attachments, parents, menu targets, and children
 	// such as product variations. These chains end quickly.
-	exempt := `(e.to_attachment OR e.reason IN ('parent', 'meta:_menu_item_object_id') OR e.reason LIKE 'child:%')`
+	exempt := `(e.to_attachment OR e.reason IN ('parent', 'menu:target') OR e.reason LIKE 'child:%')`
 	for d := depth + 1; d <= depth+100; d++ {
 		if add(d, exempt) == 0 {
 			break

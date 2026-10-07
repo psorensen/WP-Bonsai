@@ -317,8 +317,17 @@ func (g *gen) build() {
 	// Menu items pointing at pages.
 	for i := 0; i < 5 && i < len(pages); i++ {
 		id := addPost("nav_menu_item", "publish", "", "", 0, 1, base, "")
+		g.add(postmeta, len(postmeta.rows)+1, id, "_menu_item_type", "post_type")
 		g.add(postmeta, len(postmeta.rows)+1, id, "_menu_item_object_id", fmt.Sprint(pages[i]))
 		g.add(postmeta, len(postmeta.rows)+1, id, "_menu_item_object", "page")
+	}
+	// Menu items linking to category archives. Their object ID is a term
+	// ID, which matches some unrelated post ID.
+	for _, c := range cats[1:3] {
+		id := addPost("nav_menu_item", "publish", "", "", 0, 1, base, "")
+		g.add(postmeta, len(postmeta.rows)+1, id, "_menu_item_type", "taxonomy")
+		g.add(postmeta, len(postmeta.rows)+1, id, "_menu_item_object_id", fmt.Sprint(c.id))
+		g.add(postmeta, len(postmeta.rows)+1, id, "_menu_item_object", "category")
 	}
 
 	// Options.

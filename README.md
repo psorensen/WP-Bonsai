@@ -111,7 +111,8 @@ post_types:
     mode: per_term          # the newest posts in each term
     per_term: 11            # more than posts_per_page, so archives have a page 2
     taxonomies:
-      category: { max_terms: all }
+      # The 10 most-used categories, plus the ones your menus link to.
+      category: { max_terms: 10, include_menu_terms: true }
       post_tag: { max_terms: 50 }
     statuses: { publish: all, draft: 3 }
   page: { mode: all }
@@ -122,6 +123,11 @@ post_types:
 references:
   # Meta keys that hold post IDs, in addition to the built-in ones.
   extra_meta_keys: [related_story_id, hero_video_id]
+
+options:
+  # Option names a plugin uses for queues, logs, or caches. Transients and
+  # Jetpack's sync queue are always dropped.
+  exclude: ["myplugin_log_*"]
 
 tables:
   wp_custom_paywall_log: empty
@@ -141,6 +147,8 @@ Each post type uses one of four modes:
 | `per_term` | The newest `per_term` posts in each term of the listed taxonomies |
 | `all` | Every post of the type |
 | `none` | Only the posts that other kept posts depend on |
+
+In `per_term` mode, each listed taxonomy picks which terms get their own posts. `max_terms` takes the most-used terms, and `include_menu_terms` adds the terms the site's menus link to. Keep `max_terms` small on large sites: the posts multiply with every term. Terms outside the pick still keep their archive pages, with whatever kept posts they have.
 
 A post type that isn't in the config keeps its 10 newest published posts. `bonsai plan` lists those types, so you can decide whether the default is right.
 

@@ -134,6 +134,10 @@ type PostType struct {
 // TaxonomyPick limits the terms per_term mode samples from.
 type TaxonomyPick struct {
 	MaxTerms Amount `yaml:"max_terms"`
+	// IncludeMenuTerms adds the terms that the site's menus link to, on top
+	// of the first MaxTerms. Those are the archives people click. The
+	// default is true.
+	IncludeMenuTerms *bool `yaml:"include_menu_terms"`
 	// Order picks which terms count as the first MaxTerms: most_used (the
 	// default) or name.
 	Order string `yaml:"order"`
@@ -182,20 +186,21 @@ type Scrub struct {
 type Amount struct {
 	All bool
 	N   int
+	Set bool // the config file gave a value
 }
 
 // UnmarshalYAML reads "all" or a number.
 func (a *Amount) UnmarshalYAML(b []byte) error {
 	s := strings.Trim(strings.TrimSpace(string(b)), `"'`)
 	if s == "all" {
-		*a = Amount{All: true}
+		*a = Amount{All: true, Set: true}
 		return nil
 	}
 	n, err := strconv.Atoi(s)
 	if err != nil || n < 0 {
 		return fmt.Errorf(`must be "all" or a number of zero or more, not %s`, s)
 	}
-	*a = Amount{N: n}
+	*a = Amount{N: n, Set: true}
 	return nil
 }
 
@@ -264,6 +269,8 @@ func Default() *Config {
 
 func intPtr(n int) *int { return &n }
 
+func intBool(b bool) *bool { return &b }
+
 func (c *Config) fillDefaults() {
 	if c.TargetSizeMB == 0 {
 		c.TargetSizeMB = DefaultTargetSizeMB
@@ -288,7 +295,12 @@ func (c *Config) fillDefaults() {
 			if tp.Order == "" {
 				tp.Order = "most_used"
 			}
-			if !tp.MaxTerms.All && tp.MaxTerms.N == 0 {
+			if tp.IncludeMenuTerms == nil {
+				tp.IncludeMenuTerms = intBool(true)
+			}
+			// An unset max_terms means every term. An explicit 0 means
+			// only the terms the menus link to.
+			if !tp.MaxTerms.Set {
 				tp.MaxTerms = Amount{All: true}
 			}
 			pt.Taxonomies[name] = tp

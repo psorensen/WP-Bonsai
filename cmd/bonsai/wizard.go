@@ -28,6 +28,10 @@ const (
 	wizardConfigFile = "bonsai.yml"
 	wizardWorkDir    = ".bonsai-work"
 	defaultTargetMB  = 50
+	defaultMaxTerms  = 10
+	// maxDefaultMenuTerms is the most menu-linked terms the wizard fills
+	// by default.
+	maxDefaultMenuTerms = 20
 )
 
 // typeChoice is one post type the wizard asks about.
@@ -37,6 +41,22 @@ type typeChoice struct {
 	Taxonomy  string // per-term taxonomy, or "" for latest mode
 	Answer    string // "all", "0", or a number; empty means Default
 	Default   string
+	// For per-term types: how many of the most-used terms get full
+	// archives, besides the terms the menus link to.
+	Terms        string
+	TermsDefault string
+	// MenuTerms is the most terms one kept site's menus link to.
+	// IncludeMenu says whether those terms also get full archives.
+	MenuTerms   int64
+	IncludeMenu bool
+}
+
+// terms returns the terms answer, or its default when it is blank.
+func (c typeChoice) terms() string {
+	if a := strings.TrimSpace(strings.ToLower(c.Terms)); a != "" {
+		return a
+	}
+	return c.TermsDefault
 }
 
 // answer returns the user's answer, or the default when it is blank.
@@ -231,6 +251,7 @@ func suggestTypes(inv *index.Inventory, kept map[int]bool) []typeChoice {
 	published := map[string]int64{}
 	taxRel := map[string]map[string]int64{} // type -> taxonomy -> relationships
 	hier := map[string]bool{}
+	menuTerms := map[string]int64{} // taxonomy -> most menu-linked terms on one site
 	ppp := int64(10)
 	for _, s := range inv.Sites {
 		if !kept[s.BlogID] {
@@ -244,6 +265,7 @@ func suggestTypes(inv *index.Inventory, kept map[int]bool) []typeChoice {
 		}
 		for _, tx := range s.Taxonomies {
 			hier[tx.Taxonomy] = hier[tx.Taxonomy] || tx.Hierarchical
+			menuTerms[tx.Taxonomy] = max(menuTerms[tx.Taxonomy], tx.MenuTerms)
 			for typ, n := range tx.PostTypes {
 				if taxRel[typ] == nil {
 					taxRel[typ] = map[string]int64{}
@@ -266,9 +288,21 @@ func suggestTypes(inv *index.Inventory, kept map[int]bool) []typeChoice {
 		case n <= 50:
 			c.Answer = "all"
 		default:
-			c.Taxonomy = categoryTaxonomy(taxRel[typ], hier)
+			// Only the main post type gets per-term archives. Giving every
+			// type with categories its own posts per term multiplies the
+			// result for little gain.
+			if typ == "post" {
+				c.Taxonomy = categoryTaxonomy(taxRel[typ], hier)
+			}
 			if c.Taxonomy != "" && n > 200 {
 				c.Answer = strconv.FormatInt(ppp+1, 10)
+				c.TermsDefault = strconv.Itoa(defaultMaxTerms)
+				c.Terms = c.TermsDefault
+				// Menu terms are the archives people click, but some menus
+				// link to hundreds of terms. Fill them by default only
+				// when the menus are small.
+				c.MenuTerms = menuTerms[c.Taxonomy]
+				c.IncludeMenu = c.MenuTerms <= maxDefaultMenuTerms
 			} else {
 				c.Taxonomy = ""
 				c.Answer = "20"
@@ -313,6 +347,18 @@ func askTypes(choices []typeChoice) error {
 			desc = fmt.Sprintf("How many of the newest posts to keep in each %s: a number, all, or 0.", c.Taxonomy)
 		}
 		fields = append(fields, huh.NewInput().Title(title).Description(desc).Value(&c.Answer).Validate(validAnswer))
+		if c.Taxonomy != "" {
+			fields = append(fields, huh.NewInput().
+				Title(fmt.Sprintf("%s: how many of the most-used %s terms get those posts? (Enter keeps %s)", c.Type, c.Taxonomy, c.TermsDefault)).
+				Description("Other terms keep their archive pages, with fewer posts. A number, all, or 0.").
+				Value(&c.Terms).Validate(validAnswer))
+			if c.MenuTerms > 0 {
+				fields = append(fields, huh.NewConfirm().
+					Title(fmt.Sprintf("%s: also give those posts to the %s terms your menus link to? (up to %d on one site)", c.Type, c.Taxonomy, c.MenuTerms)).
+					Description("These are the archives people click. Large menus add many posts.").
+					Value(&c.IncludeMenu))
+			}
+		}
 	}
 	if len(fields) == 0 {
 		return nil
@@ -352,7 +398,7 @@ func wizardYAML(dumpPath string, targetMB float64, choices []typeChoice, inv *in
 			case ans == "all":
 				b.WriteString("    mode: all\n")
 			case c.Taxonomy != "":
-				fmt.Fprintf(&b, "    mode: per_term\n    per_term: %s\n    taxonomies:\n      %s: { max_terms: all }\n", ans, yamlKey(c.Taxonomy))
+				fmt.Fprintf(&b, "    mode: per_term\n    per_term: %s\n    taxonomies:\n      %s: { max_terms: %s, include_menu_terms: %t }\n", ans, yamlKey(c.Taxonomy), c.terms(), c.IncludeMenu)
 			default:
 				fmt.Fprintf(&b, "    mode: latest\n    count: %s\n", ans)
 			}

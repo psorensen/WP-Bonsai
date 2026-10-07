@@ -84,6 +84,9 @@ var roleColumns = map[string][]string{
 	"blogs":              {"blog_id", "domain", "path", "public", "archived", "deleted", "spam"},
 }
 
+// menuMetaKeys are the post meta keys that say where a menu item points.
+var menuMetaKeys = map[string]bool{"_menu_item_type": true, "_menu_item_object": true, "_menu_item_object_id": true}
+
 // Maximum meta value size that pass 1 decodes to look for IDs.
 const maxRefValueBytes = 1 << 20
 
@@ -406,8 +409,14 @@ func (ix *indexer) row(it *sqldump.Item) error {
 	case "posts":
 		return ix.post(t, size)
 	case "postmeta":
-		if err := ix.appendRow("postmeta", t.name, nil, ix.id(0), ix.id(1), ix.str(2), size); err != nil {
+		key := ix.str(2)
+		if err := ix.appendRow("postmeta", t.name, nil, ix.id(0), ix.id(1), key, size); err != nil {
 			return err
+		}
+		if k, ok := key.(string); ok && menuMetaKeys[k] {
+			if err := ix.appendRow("menu_meta", t.name, nil, ix.id(1), k, ix.str(3)); err != nil {
+				return err
+			}
 		}
 		return ix.postmetaRefs(t)
 	case "terms":

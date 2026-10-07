@@ -117,7 +117,9 @@ type Taxonomy struct {
 	Terms        int64            `json:"terms"`
 	Hierarchical bool             `json:"hierarchical"`
 	PostTypes    map[string]int64 `json:"post_types"` // relationship count per post type
-	LargestTerms []TermCount      `json:"largest_terms"`
+	// MenuTerms is how many terms of this taxonomy the site's menus link to.
+	MenuTerms    int64       `json:"menu_terms"`
+	LargestTerms []TermCount `json:"largest_terms"`
 }
 
 type TermCount struct {
@@ -300,6 +302,20 @@ func (r *reader) site(st *Site) {
 		}
 		if i, ok := taxes[tax]; ok {
 			st.Taxonomies[i].PostTypes[typ] = n
+		}
+		return nil
+	}, id)
+	r.rows(`SELECT ob.value, count(DISTINCT o.value) FROM menu_meta o
+		JOIN menu_meta ty ON ty.site = o.site AND ty.post_id = o.post_id AND ty.meta_key = '_menu_item_type' AND ty.value = 'taxonomy'
+		JOIN menu_meta ob ON ob.site = o.site AND ob.post_id = o.post_id AND ob.meta_key = '_menu_item_object'
+		WHERE o.site = $1 AND o.meta_key = '_menu_item_object_id' GROUP BY 1`, func(s scanner) error {
+		var tax string
+		var n int64
+		if err := s.Scan(&tax, &n); err != nil {
+			return err
+		}
+		if i, ok := taxes[tax]; ok {
+			st.Taxonomies[i].MenuTerms = n
 		}
 		return nil
 	}, id)

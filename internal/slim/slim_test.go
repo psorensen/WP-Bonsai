@@ -198,10 +198,12 @@ func TestMariaDB(t *testing.T) {
 						LEFT JOIN %[1]sposts p ON p.ID = r.object_id WHERE p.ID IS NULL AND tt.taxonomy <> 'link_category'`,
 					"relationships of missing terms": `SELECT count(*) FROM %[1]sterm_relationships r LEFT JOIN %[1]sterm_taxonomy tt USING (term_taxonomy_id) WHERE tt.term_taxonomy_id IS NULL`,
 					"missing featured images":        `SELECT count(*) FROM %[1]spostmeta m LEFT JOIN %[1]sposts p ON p.ID = m.meta_value WHERE m.meta_key = '_thumbnail_id' AND p.ID IS NULL`,
-					"missing menu targets":           `SELECT count(*) FROM %[1]spostmeta m LEFT JOIN %[1]sposts p ON p.ID = m.meta_value WHERE m.meta_key = '_menu_item_object_id' AND p.ID IS NULL`,
-					"comments of missing posts":      `SELECT count(*) FROM %[1]scomments c LEFT JOIN %[1]sposts p ON p.ID = c.comment_post_ID WHERE p.ID IS NULL`,
-					"missing front page":             `SELECT count(*) FROM %[1]soptions o LEFT JOIN %[1]sposts p ON p.ID = o.option_value WHERE o.option_name = 'page_on_front' AND o.option_value <> '0' AND p.ID IS NULL`,
-					"missing authors":                `SELECT count(*) FROM %[1]sposts p LEFT JOIN wp_users u ON u.ID = p.post_author WHERE u.ID IS NULL`,
+					"missing menu targets": `SELECT count(*) FROM %[1]spostmeta m
+						JOIN %[1]spostmeta ty ON ty.post_id = m.post_id AND ty.meta_key = '_menu_item_type' AND ty.meta_value = 'post_type'
+						LEFT JOIN %[1]sposts p ON p.ID = m.meta_value WHERE m.meta_key = '_menu_item_object_id' AND p.ID IS NULL`,
+					"comments of missing posts": `SELECT count(*) FROM %[1]scomments c LEFT JOIN %[1]sposts p ON p.ID = c.comment_post_ID WHERE p.ID IS NULL`,
+					"missing front page":        `SELECT count(*) FROM %[1]soptions o LEFT JOIN %[1]sposts p ON p.ID = o.option_value WHERE o.option_name = 'page_on_front' AND o.option_value <> '0' AND p.ID IS NULL`,
+					"missing authors":           `SELECT count(*) FROM %[1]sposts p LEFT JOIN wp_users u ON u.ID = p.post_author WHERE u.ID IS NULL`,
 				}
 				existing := db.Query(t, fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = '%s'", schema))
 				for what, q := range checks {

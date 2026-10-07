@@ -63,6 +63,16 @@ func TestParseSpecExample(t *testing.T) {
 	if tp := post.Taxonomies["category"]; !tp.MaxTerms.All || tp.Order != "most_used" {
 		t.Errorf("category pick = %+v", tp)
 	}
+	if tp := post.Taxonomies["category"]; !*tp.IncludeMenuTerms {
+		t.Errorf("include_menu_terms should default to true")
+	}
+	zero, err := Parse([]byte("post_types: {post: {mode: per_term, per_term: 5, taxonomies: {category: {max_terms: 0}}}}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mt := zero.PostTypes["post"].Taxonomies["category"].MaxTerms; mt.All || mt.N != 0 {
+		t.Errorf("max_terms: 0 should mean menu terms only, got %+v", mt)
+	}
 	if tp := post.Taxonomies["post_tag"]; tp.MaxTerms.N != 50 {
 		t.Errorf("post_tag pick = %+v", tp)
 	}

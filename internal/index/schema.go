@@ -2,7 +2,7 @@ package index
 
 // schemaVersion changes whenever the index tables change, so an old index
 // is rebuilt instead of misread.
-const schemaVersion = "2"
+const schemaVersion = "3"
 
 // Every row table has a tbl column holding the source table name. Tables
 // that belong to one site of a network also have a site column holding its
@@ -47,6 +47,12 @@ CREATE TABLE postmeta (tbl VARCHAR, site INTEGER, meta_id BIGINT, post_id BIGINT
 -- builder follows only chosen meta keys.
 CREATE TABLE meta_refs (tbl VARCHAR, site INTEGER, meta_id BIGINT, post_id BIGINT, meta_key VARCHAR, ref_id BIGINT);
 
+-- The target of each menu item: _menu_item_type (post_type, taxonomy,
+-- custom, ...), _menu_item_object (page, category, ...), and
+-- _menu_item_object_id, one row per meta key. The object ID is a post ID
+-- only when the type is post_type; for taxonomy it is a term ID.
+CREATE TABLE menu_meta (tbl VARCHAR, site INTEGER, post_id BIGINT, meta_key VARCHAR, value VARCHAR);
+
 -- IDs found in post_content: block attributes, wp-image classes, gallery shortcodes.
 CREATE TABLE content_refs (tbl VARCHAR, site INTEGER, post_id BIGINT, ref_id BIGINT, source VARCHAR);
 
@@ -90,6 +96,7 @@ var siteTables = []struct{ table, suffix string }{
 	{"posts", "posts"},
 	{"postmeta", "postmeta"},
 	{"meta_refs", "postmeta"},
+	{"menu_meta", "postmeta"},
 	{"content_refs", "posts"},
 	{"acf_fields", "posts"},
 	{"terms", "terms"},

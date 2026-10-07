@@ -44,8 +44,9 @@ func TestSuggestTypes(t *testing.T) {
 		byType[c.Type] = c
 	}
 	// posts_per_page is 10 on site 1 and 5 on site 2; the larger wins.
-	if c := byType["post"]; c.Taxonomy != "category" || c.Answer != "11" {
-		t.Errorf("post = %+v, want 11 per category", c)
+	// The synthetic menus link to 2 categories, few enough to fill.
+	if c := byType["post"]; c.Taxonomy != "category" || c.Answer != "11" || c.TermsDefault != "10" || c.MenuTerms != 2 || !c.IncludeMenu {
+		t.Errorf("post = %+v, want 11 per category in the top 10 categories", c)
 	}
 	if c := byType["page"]; c.Taxonomy != "" || c.Answer != "20" {
 		t.Errorf("page = %+v, want latest 20", c)
@@ -63,7 +64,7 @@ func TestSuggestTypes(t *testing.T) {
 func TestWizardYAML(t *testing.T) {
 	inv, indexPath := testInventory(t)
 	choices := []typeChoice{
-		{Type: "post", Taxonomy: "category", Answer: "11"},
+		{Type: "post", Taxonomy: "category", Answer: "11", Terms: "", TermsDefault: "10", IncludeMenu: true},
 		{Type: "page", Answer: "all"},
 		{Type: "product", Answer: "25"},
 		{Type: "obituary", Answer: "0"},
@@ -77,8 +78,9 @@ func TestWizardYAML(t *testing.T) {
 	if cfg.TargetSizeMB != 50 {
 		t.Errorf("target = %v", cfg.TargetSizeMB)
 	}
-	if pt := cfg.PostTypes["post"]; pt.Mode != config.ModePerTerm || pt.PerTerm != 11 || !pt.Taxonomies["category"].MaxTerms.All {
-		t.Errorf("post = %+v", pt)
+	if pt := cfg.PostTypes["post"]; pt.Mode != config.ModePerTerm || pt.PerTerm != 11 ||
+		pt.Taxonomies["category"].MaxTerms.N != 10 || !*pt.Taxonomies["category"].IncludeMenuTerms {
+		t.Errorf("post = %+v %+v", pt, pt.Taxonomies["category"])
 	}
 	if pt := cfg.PostTypes["product"]; pt.Mode != config.ModeLatest || pt.Count != 25 {
 		t.Errorf("product = %+v", pt)

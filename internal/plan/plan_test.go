@@ -167,9 +167,10 @@ func TestDependencies(t *testing.T) {
 		"featured image": `SELECT count(*) FROM ix.meta_refs m JOIN keep k ON k.id = m.post_id
 			JOIN ix.posts t ON t.id = m.ref_id
 			WHERE m.meta_key = '_thumbnail_id' AND m.ref_id NOT IN (SELECT id FROM keep)`,
-		"menu target": `SELECT count(*) FROM ix.meta_refs m JOIN keep k ON k.id = m.post_id
-			JOIN ix.posts t ON t.id = m.ref_id
-			WHERE m.meta_key = '_menu_item_object_id' AND m.ref_id NOT IN (SELECT id FROM keep)`,
+		"menu target": `SELECT count(*) FROM ix.menu_meta o
+			JOIN ix.menu_meta t ON t.post_id = o.post_id AND t.meta_key = '_menu_item_type' AND t.value = 'post_type'
+			JOIN ix.posts p ON p.id = CAST(o.value AS BIGINT)
+			WHERE o.meta_key = '_menu_item_object_id' AND p.id NOT IN (SELECT id FROM keep)`,
 		"parent": `SELECT count(*) FROM keep k JOIN ix.posts p USING (id) JOIN ix.posts parent ON parent.id = p.parent
 			WHERE p.type <> 'attachment' AND p.parent NOT IN (SELECT id FROM keep)`,
 		"block image": `SELECT count(*) FROM ix.content_refs c JOIN keep k ON k.id = c.post_id
@@ -413,6 +414,48 @@ options:
 	}
 	if got := globToLike("jpsq_*"); got != `jpsq\_%` {
 		t.Errorf("jpsq pattern = %s", got)
+	}
+}
+
+func TestMenuTerms(t *testing.T) {
+	const menuCats = `SELECT CAST(o.value AS BIGINT) FROM ix.menu_meta o
+		JOIN ix.menu_meta t ON t.post_id = o.post_id AND t.meta_key = '_menu_item_type' AND t.value = 'taxonomy'
+		WHERE o.meta_key = '_menu_item_object_id'`
+	cfg := func(include string) string {
+		return `
+post_types:
+  post:
+    mode: per_term
+    per_term: 5
+    taxonomies:
+      category: { max_terms: 1` + include + ` }
+`
+	}
+
+	p := buildPlan(t, cfg(""))
+	// A menu item that links to a category holds a term ID. It must not
+	// pull in the post that happens to have the same ID.
+	if n := count(t, p, `SELECT count(*) FROM keep WHERE reason = 'menu:target' AND id IN (`+menuCats+`)`); n != 0 {
+		t.Errorf("%d posts kept because their ID equals a menu item's term ID", n)
+	}
+	if n := count(t, p, `SELECT count(*) FROM keep WHERE reason = 'menu:target'`); n == 0 {
+		t.Error("no page kept as a menu target")
+	}
+	// The top category plus the two menu categories are seeded.
+	seededCats := `SELECT count(DISTINCT tt.term_id) FROM seed s
+		JOIN ix.term_relationships tr ON tr.object_id = s.id
+		JOIN ix.term_taxonomy tt USING (term_taxonomy_id)
+		WHERE s.reason = 'type:post:per_term:category' AND tt.taxonomy = 'category' AND tt.term_id IN (` + menuCats + `)`
+	if n := count(t, p, seededCats); n != 2 {
+		t.Errorf("%d menu categories seeded, want 2", n)
+	}
+
+	off := buildPlan(t, cfg(", include_menu_terms: false"))
+	if n := count(t, off, `SELECT count(*) FROM seed WHERE reason = 'type:post:per_term:category'`); n == 0 || n > 5 {
+		t.Errorf("with include_menu_terms off, %d seeds; want 1 to 5 from the top category only", n)
+	}
+	if count(t, off, `SELECT count(*) FROM seed`) >= count(t, p, `SELECT count(*) FROM seed`) {
+		t.Error("including menu terms did not add seeds")
 	}
 }
 
