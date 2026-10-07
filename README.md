@@ -1,85 +1,80 @@
 # Bonsai
 
-Bonsai turns a production WordPress database of any size into a small, scrubbed copy that still looks like production.
+Bonsai shrinks a production WordPress database into a small, scrubbed copy that you can run locally. It keeps the parts of the site people actually see, so the local copy still looks and behaves like production.
 
-A 27 GB multisite newspaper network became a 46 MB dump in under 6 minutes. That is less than 0.2% of the original. The home page, menus, archives, and templates of every site still work.
+In our largest test, a 27 GB multisite newspaper network came down to a 46 MB dump in under six minutes. Every site's home page, menus, archives, and templates still worked.
 
 ## Why Bonsai
 
-Most of a large WordPress database is content nobody opens during development: old articles, revisions, logs, caches, and form entries. A developer needs the parts that make the site look and behave like production. They do not need ten years of archive.
+Most of a large WordPress database is content you never open while developing. There are years of old articles, thousands of revisions, logs, caches, and form entries. Importing all of that takes hours, and it puts reader data on every laptop.
 
-Bonsai keeps those parts and drops the rest:
+What you need locally is much smaller: the home page, the navigation, the archive pages, recent content, and the settings that hold the site together. Bonsai keeps exactly that.
 
-- **The home page and site settings are kept.** The front page, the posts page, sticky posts, and every option except transients come along.
-- **Menus are kept in full**, and so is every page or post a menu links to.
-- **Every term is kept**, so each category and tag archive URL resolves. Each archive gets enough recent posts to show a second page.
-- **Templates, template parts, global styles, reusable blocks, and ACF field definitions are always kept.**
-- **Kept posts bring what they depend on:** featured images, images and files in their blocks, parent pages, related posts named in meta, and ACF image, gallery, and relationship fields.
-- **Every post meta row of a kept post is kept, unchanged.** The size comes down by keeping fewer posts, never by trimming the posts that stay.
+It starts from the home page, the menus, and the most recent posts of each type. Then it follows everything those posts depend on: featured images, images and files in the content, parent pages, related posts, and ACF fields. It keeps every category and tag, and it gives each archive enough posts to show a second page. Templates, global styles, reusable blocks, and ACF field definitions always come along.
 
-The result is a site that matches production where developers look: the home page, navigation, archives, and recent content. It leaves out the large body of posts that no page on the site surfaces.
+The result is a site that matches production wherever developers look, without the long tail of posts that nothing on the site links to. Bonsai never trims the posts it keeps. All of their post meta comes along unchanged, so any template that works in production works locally too.
 
-## What gets dropped
+## What Bonsai leaves out
 
-- Older posts beyond what each post type's rule keeps, unless a kept post or menu depends on them
+- Older posts that no kept page, menu, or post depends on
 - Revisions, auto-drafts, oEmbed caches, and customizer changesets
-- Comments, on every site
-- Rebuildable indexes, such as Yoast indexables and WooCommerce lookup tables. Rebuild them after import.
-- Logs, queues, and caches, such as Action Scheduler, Stream, Redirection logs, and Wordfence
+- Comments
+- Indexes that plugins can rebuild, such as Yoast indexables and WooCommerce lookup tables
+- Logs, queues, and caches from plugins such as Action Scheduler, Stream, Redirection, and Wordfence
 - Personal data tables, such as orders, form entries, and newsletter lists
-- Sites of a network that you exclude, and tables left over from deleted sites
+- Sites of a network that you choose to exclude, and tables left over from deleted sites
 
 ## Results
 
-Measured on a laptop with Apple silicon. Details are in [docs/benchmarks.md](docs/benchmarks.md).
+These numbers come from a laptop with Apple silicon. See [docs/benchmarks.md](docs/benchmarks.md) for the details.
 
 | | |
 | --- | --- |
-| Input | 26.8 GB of SQL (6.9 GB gzip), 6 sites, 91.5 million rows |
-| Output | 46 MB (5 MB gzip), scrubbed and validated |
-| Time | 5 min 39 s from scratch; 2 min 18 s when the index is reused |
+| Input | 26.8 GB of SQL (6.9 GB gzipped), 6 sites, 91.5 million rows |
+| Output | 46 MB (5 MB gzipped), scrubbed and validated |
+| Time | 5 min 39 s from scratch, or 2 min 18 s when the index is reused |
 | Peak memory | 684 MB |
 
 ## How it works
 
-1. **Pass 1** streams the dump once and writes a small DuckDB index: IDs, types, dates, sizes, and references between posts. It stores no post content and no personal data.
-2. **Plan** reads your config and picks which rows to keep, with SQL on the index. It then estimates the output size, table by table.
-3. **Pass 2** streams the dump again and writes only the kept rows.
-4. **Sandbox finish** imports the result into a throwaway MariaDB and WP-CLI pair in Docker, on a network with no internet access. There it scrubs personal data, adds a local admin login, recounts terms, and validates the result. Only then does it export the final file.
+Bonsai reads the dump twice and never loads it into a database server until the very end.
 
-Memory stays flat whatever the dump size. Both passes stream, and DuckDB's memory is capped.
+1. **Index.** The first pass streams the dump and builds a small DuckDB index of IDs, post types, dates, sizes, and the references between posts. The index holds no post content and no personal data.
+2. **Plan.** Bonsai applies your config to the index with SQL. It decides which rows to keep and estimates the size of the output, table by table, before writing anything.
+3. **Write.** The second pass streams the dump again and writes only the rows in the plan.
+4. **Finish.** Bonsai imports the result into a throwaway MariaDB and WP-CLI setup in Docker, with no internet access. There it scrubs personal data, adds a local admin login, recounts terms, and checks the result before exporting the final file.
+
+Because both passes stream, memory use stays flat no matter how large the dump is.
 
 ## Requirements
 
-- Go 1.27 or later, to build
-- Docker, for the sandbox finish step
-- An internet connection the first time only, to build the sandbox image
+You need Go 1.27 or later to build Bonsai, and Docker to run the finish step. The first build of the sandbox image downloads WordPress and the scrubber, so that one step needs an internet connection.
 
 ## Quick start
 
 ```sh
 go build -o bonsai ./cmd/bonsai
 
-# Pass 1: index the dump. Accepts .sql and .sql.gz files.
+# Index the dump. Bonsai reads .sql and .sql.gz files.
 bonsai index production.sql.gz -out work/
 
 # See what the dump holds: sites, post types, taxonomies, and tables.
 bonsai inspect work/
 
-# Try a config and see the size estimate. Writes nothing.
+# Try a config and check the size estimate. This writes nothing.
 bonsai plan work/ -config bonsai.yml
 
 # Build the scrubbed dump.
 bonsai build production.sql.gz -config bonsai.yml -work work/ -out slim.sql
 ```
 
-`build` writes `slim.sql` and a validation report, `slim.report.json`, next to it. Log in to the imported site as `bonsai` with the password `bonsai`.
+`build` writes `slim.sql` along with a validation report, `slim.report.json`. After you import the file, log in as `bonsai` with the password `bonsai`.
 
-`build` deletes the index when it finishes. Pass `-keep-work` to keep it for more `plan` runs.
+By default, `build` deletes the index when it finishes. Add `-keep-work` if you want to keep it for more `plan` runs.
 
 ## Configuration
 
-Each project keeps one `bonsai.yml`, so every developer on the team gets the same dump. Anything you leave out uses a default.
+Each project keeps a single `bonsai.yml`, so everyone on the team gets the same dump. You only need to set what differs from the defaults.
 
 ```yaml
 project: example-newspaper
@@ -112,50 +107,53 @@ sites:                      # multisite only
   "3": { exclude: false, post_types: { post: { mode: latest, count: 50 } } }
 ```
 
-Post type modes:
+Each post type uses one of four modes:
 
-| Mode | Keeps |
+| Mode | What it keeps |
 | --- | --- |
 | `latest` | The newest `count` posts |
 | `per_term` | The newest `per_term` posts in each term of the listed taxonomies |
 | `all` | Every post of the type |
-| `none` | Only posts another kept post depends on |
+| `none` | Only the posts that other kept posts depend on |
 
-A post type that the config does not list keeps its 10 newest published posts. `bonsai plan` lists every such type, so you can decide.
+A post type that isn't in the config keeps its 10 newest published posts. `bonsai plan` lists those types, so you can decide whether the default is right.
 
 ## Safety
 
-- **The raw dump never leaves your machine.** Pass 1, pass 2, and the sandbox all run locally.
-- **Scrubbing.** The sandbox runs 10up WP Scrubber (`wp scrub all`), which replaces every user's login, email, name, and password. Bonsai then replaces site and network admin emails.
-- **The validation gate.** Bonsai checks every email and IP column of every table, and the references between posts, menus, and terms. If the scrubber fails or any check fails, Bonsai writes no output.
-- **No GPL code in Bonsai.** The scrubber runs inside the sandbox image and is called only through WP-CLI.
+The raw dump never leaves your machine. Every step runs locally, and the finish step runs in containers that cannot reach the internet.
+
+To scrub personal data, the finish step runs 10up WP Scrubber (`wp scrub all`), which replaces every user's login, email, name, and password. Bonsai then replaces the admin emails of each site and of the network.
+
+Before writing anything, Bonsai validates the result. It checks every email and IP address column in every table, as well as the references between posts, menus, and terms. If the scrubber fails or any check fails, Bonsai writes no output at all.
+
+WP Scrubber is GPL-licensed, so it runs only inside the sandbox image, called through WP-CLI. None of its code is part of Bonsai.
 
 ## After importing
 
-Run the rebuild commands the report lists, with the project's plugins active. For example:
+The report lists any commands that rebuild tables Bonsai emptied. Run them with the project's plugins active, for example:
 
 ```sh
 wp yoast index
 ```
 
-Images load from production through your usual local proxy. Bonsai handles database rows only, not media files.
+Bonsai handles database rows only. Images keep loading from production through your usual local proxy.
 
 ## Status
 
-Phase 1, the local CLI, is complete. It covers single sites and multisite networks. The SPEC.md phases that follow are a local web UI, then a hosted service, then a render test.
+Phase 1, the local command-line tool, is complete. It handles single sites and multisite networks. The next phases in [SPEC.md](SPEC.md) are a local web UI, a hosted service, and a render test.
 
-Known limits:
+A few known limits:
 
-- Dumps must be `mysqldump`-style `.sql` or `.sql.gz` files. `.sql.zst`, `.zip`, and mydumper exports are not supported yet.
+- Bonsai reads `mysqldump`-style `.sql` and `.sql.gz` files. It doesn't support `.sql.zst`, `.zip`, or mydumper exports yet.
 - WPML's `icl_translations` table is kept whole rather than filtered.
-- Pass 1 reads gzip on one core. Decompressing the file first makes pass 1 faster.
+- Gzip decompression runs on a single core, so pass 1 is faster on a dump you decompress first.
 
 ## Development
 
 ```sh
 go test ./...                     # unit tests
 BONSAI_MARIADB=1 go test ./...    # adds the Docker tests: MariaDB round trips and the sandbox
-go run ./cmd/synthdump -posts 5000 -subsite -o synthetic.sql   # a synthetic test dump
+go run ./cmd/synthdump -posts 5000 -subsite -o synthetic.sql   # generate a synthetic test dump
 ```
 
-The design is in [SPEC.md](SPEC.md). Working rules for contributors are in [CLAUDE.md](CLAUDE.md).
+The design is in [SPEC.md](SPEC.md), and the working rules for contributors are in [CLAUDE.md](CLAUDE.md).
