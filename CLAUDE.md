@@ -13,7 +13,9 @@ Build:
 - The pass 2 writer.
 - The sandbox finish step in local Docker: MariaDB plus WP-CLI, scrub, term recount, validation report.
 
-Do not build yet: any web UI, hosting, upload, auth, multisite, or the render test. If a task seems to need one of these, stop and ask.
+Do not build yet: any web UI, hosting, upload, auth, or the render test. If a task seems to need one of these, stop and ask.
+
+Multisite is in scope for Phase 1 (decided 2026-10-06). Every site is indexed with its blog ID, and the config can override or exclude sites under `sites:`.
 
 ## Commands (target shape)
 
@@ -30,6 +32,7 @@ bonsai build   <dump>  --config bonsai.yml --out slim.sql   # pass 1 if needed, 
 - **Memory stays flat.** Pass 1 and pass 2 must stream. Never load a whole table or the whole file into memory. Memory use must not grow with dump size beyond the ID sets.
 - **The parser is the foundation.** Every parser change needs a round-trip test: parse, write back unchanged, import both into MariaDB, and compare row counts and checksums per table.
 - **Selection logic lives in SQL on the DuckDB index**, not in Go loops, unless there is a clear reason.
+- **Keep every post meta row of a kept post, unchanged.** Size savings come from keeping fewer posts and post types, never from trimming or rewriting meta values. This overrides the noise-key rule in SPEC.md.
 - **No GPL code in the engine.** Call the scrubber through WP-CLI; do not port its PHP into Go. Check a dependency's license before adding it. MIT, BSD, and Apache 2.0 are fine.
 - **Keep client details out of this repo.** No client names, table names, or configs. Examples use `example-newspaper`.
 - Run `go test ./...` and `go vet ./...` before saying a task is done.
@@ -48,4 +51,3 @@ Work one milestone at a time. Each ends with passing tests and a short summary f
 ## Open questions that affect the code
 
 - Which Fueled scrubber package milestone 5 calls, and its WP-CLI command.
-- Whether multisite support is needed in Phase 1 (assume no).

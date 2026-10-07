@@ -13,11 +13,14 @@ import (
 const usage = `Usage:
   bonsai index     <dump> [-out work/]
   bonsai inspect   [work/]
+  bonsai plan      [work/] [-config bonsai.yml] [-json] [-all]
   bonsai roundtrip <dump> [-o out.sql] [-max-insert-bytes N]
 
 Commands:
   index       Pass 1. Read the dump once and write work/index.duckdb.
   inspect     Print the inventory of an index as JSON.
+  plan        Build the keep set from the index and a config, and estimate
+              the output size. Writes nothing.
   roundtrip   Parse a dump and write it back out. With -max-insert-bytes 0 the
               output must match the input byte for byte. Prints statistics.
 
@@ -38,6 +41,8 @@ func main() {
 		err = indexCmd(ctx, os.Args[2:])
 	case "inspect":
 		err = inspectCmd(ctx, os.Args[2:])
+	case "plan":
+		err = planCmd(ctx, os.Args[2:])
 	case "roundtrip":
 		err = roundtrip(os.Args[2:])
 	case "-h", "--help", "help":

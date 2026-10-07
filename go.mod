@@ -2,7 +2,10 @@ module github.com/psorensen/WP-Bonsai
 
 go 1.27.1
 
-require github.com/duckdb/duckdb-go/v2 v2.10506.0
+require (
+	github.com/duckdb/duckdb-go/v2 v2.10506.0
+	github.com/goccy/go-yaml v1.17.1
+)
 
 require (
 	github.com/apache/arrow-go/v18 v18.5.1 // indirect
