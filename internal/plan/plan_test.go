@@ -393,6 +393,29 @@ func TestLibraryRules(t *testing.T) {
 	}
 }
 
+func TestOptionRules(t *testing.T) {
+	p := buildPlan(t, testConfig+`
+options:
+  exclude: ["big_*"]
+`)
+	for name, want := range map[string]int64{
+		"_transient_feed_abc123": 0, "big_option": 0, "siteurl": 1, "posts_per_page": 1,
+	} {
+		if n := count(t, p, `SELECT count(*) FROM keep_options JOIN ix.options o USING (site, option_id) WHERE o.name = ?`, name); n != want {
+			t.Errorf("option %s kept %d times, want %d", name, n, want)
+		}
+	}
+	// Without the exclusion, the 120 KB big_option stays and no warning
+	// names it, because it is under 1 MB.
+	p2 := buildPlan(t, testConfig)
+	if n := count(t, p2, `SELECT count(*) FROM keep_options JOIN ix.options o USING (site, option_id) WHERE o.name = 'big_option'`); n != 1 {
+		t.Errorf("big_option kept %d times without an exclusion", n)
+	}
+	if got := globToLike("jpsq_*"); got != `jpsq\_%` {
+		t.Errorf("jpsq pattern = %s", got)
+	}
+}
+
 func TestGlobToLike(t *testing.T) {
 	for glob, want := range map[string]string{
 		"_oembed_*":  `\_oembed\_%`,

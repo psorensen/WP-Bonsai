@@ -63,6 +63,8 @@ var library = []libraryRule{
 	{"wf*", config.TableEmpty, "wordfence", ""},
 	{"wfls_*", config.TableEmpty, "wordfence", ""},
 	{"stream", config.TableEmpty, "stream", ""},
+	{"jetpack_sync_queue", config.TableEmpty, "jetpack", "Jetpack rebuilds its sync queue"},
+	{"vip_search_index_queue", config.TableEmpty, "vip-search", "VIP Search rebuilds its index queue"},
 	{"stream_meta", config.TableEmpty, "stream", ""},
 	{"wc_admin_notes", config.TableEmpty, "woocommerce", ""},
 	{"wc_admin_note_actions", config.TableEmpty, "woocommerce", ""},

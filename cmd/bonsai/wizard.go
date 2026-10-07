@@ -138,9 +138,14 @@ func wizardCmd(ctx context.Context, dumpPath string) error {
 			return err
 		}
 		printEstimate(p)
+		over := p.EstimateBytes > p.TargetBytes
 		p.Close()
 
+		// Over the target, nudge toward changing the numbers.
 		next := "build"
+		if over {
+			next = "change"
+		}
 		if err := ask(huh.NewSelect[string]().
 			Title("What next?").
 			Options(
@@ -393,6 +398,16 @@ func printEstimate(p *plan.Plan) {
 		status = "over"
 	}
 	fmt.Printf("\nEstimated size: %s, %s the target of %s.\n\n", plan.FormatBytes(p.EstimateBytes), status, plan.FormatBytes(p.TargetBytes))
+	if status == "over" {
+		top := slices.Clone(p.Tables)
+		slices.SortFunc(top, func(a, b plan.TablePlan) int { return int(b.Bytes - a.Bytes) })
+		fmt.Println("The biggest tables in the result:")
+		for _, t := range top[:min(5, len(top))] {
+			fmt.Printf("  %-40s %10s  %s rows kept\n", t.Name, plan.FormatBytes(t.Bytes), humanInt(t.KeptRows))
+		}
+		fmt.Println("\nKeep fewer posts to shrink posts and post meta. For other tables, add a rule to bonsai.yml.")
+		fmt.Println()
+	}
 }
 
 // humanInt formats 830374 as 830,374.

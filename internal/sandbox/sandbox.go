@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -78,7 +79,9 @@ func Start(ctx context.Context, log func(string)) (*Sandbox, error) {
 		return nil, fmt.Errorf("sandbox: create network: %w", err)
 	}
 	if err := docker(ctx, nil, nil, "run", "-d", "--rm", "--name", s.db, "--network", s.network,
-		"--network-alias", "db", "--tmpfs", "/var/lib/mysql",
+		// An anonymous volume, not tmpfs: a big result does not fit in the
+		// memory of Docker's VM. --rm deletes the volume with the container.
+		"--network-alias", "db", "-v", "/var/lib/mysql",
 		"-e", "MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=1", "-e", "MARIADB_DATABASE=wordpress",
 		mariadbImage, "--max-allowed-packet=256M"); err != nil {
 		s.Close()
@@ -142,7 +145,7 @@ func (s *Sandbox) Import(ctx context.Context, path string) error {
 	defer f.Close()
 	var out bytes.Buffer
 	if err := docker(ctx, f, &out, "exec", "-i", s.db, "mariadb", "-uroot", "wordpress"); err != nil {
-		return fmt.Errorf("sandbox: import failed: %w\n%s", err, tail(out.String(), 2000))
+		return fmt.Errorf("sandbox: import failed: %w: %s", err, dbErrors(out.String()))
 	}
 	return nil
 }
@@ -152,7 +155,7 @@ func (s *Sandbox) Import(ctx context.Context, path string) error {
 func (s *Sandbox) SQL(ctx context.Context, query string) (string, error) {
 	var out bytes.Buffer
 	if err := docker(ctx, strings.NewReader(query), &out, "exec", "-i", s.db, "mariadb", "-uroot", "-N", "-B", "wordpress"); err != nil {
-		return "", fmt.Errorf("sandbox: SQL failed: %w: %s", err, lastLines(out.String(), 2))
+		return "", fmt.Errorf("sandbox: SQL failed: %w: %s", err, dbErrors(out.String()))
 	}
 	return strings.TrimRight(out.String(), "\n"), nil
 }
@@ -162,7 +165,7 @@ func (s *Sandbox) WP(ctx context.Context, args ...string) (string, error) {
 	var out bytes.Buffer
 	full := append([]string{"exec", s.cli, "wp"}, args...)
 	if err := docker(ctx, nil, &out, full...); err != nil {
-		return "", fmt.Errorf("sandbox: wp %s failed: %w\n%s", strings.Join(args, " "), err, tail(lastLines(out.String(), 6), 1500))
+		return "", fmt.Errorf("sandbox: wp %s failed: %w\n%s", strings.Join(args, " "), err, Redact(tail(lastLines(out.String(), 6), 1500)))
 	}
 	return strings.TrimRight(out.String(), "\n"), nil
 }
@@ -175,7 +178,7 @@ func (s *Sandbox) Export(ctx context.Context, w io.Writer) error {
 	cmd.Stdout = w
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("sandbox: export failed: %w\n%s", err, tail(stderr.String(), 2000))
+		return fmt.Errorf("sandbox: export failed: %w: %s", err, dbErrors(stderr.String()))
 	}
 	return nil
 }
@@ -219,4 +222,43 @@ func CheckDocker(ctx context.Context) error {
 		return fmt.Errorf("Docker is not running: %w", err)
 	}
 	return nil
+}
+
+// Errors from the sandbox go to the terminal and into the report, which is
+// meant to be safe to share. The database holds production data, and
+// MariaDB echoes the failing statement with its values, so errors are
+// redacted before they leave this package.
+
+var (
+	quotedRe = regexp.MustCompile(`'[^']*'`)
+	identRe  = regexp.MustCompile(`^'[A-Za-z0-9_$.\-]{1,64}'$`)
+	emailRe  = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+)
+
+// dbErrors keeps only the ERROR lines of MariaDB client output, redacted.
+// The client also prints the failing statement, which holds row values.
+func dbErrors(out string) string {
+	var keep []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "ERROR") {
+			keep = append(keep, Redact(tail(strings.TrimSpace(line), 300)))
+		}
+	}
+	if len(keep) == 0 {
+		return "no error message from MariaDB"
+	}
+	return strings.Join(keep, "; ")
+}
+
+// Redact removes data from an error message. A quoted value survives only
+// when it looks like a table or column name. Email addresses are removed
+// everywhere.
+func Redact(s string) string {
+	s = quotedRe.ReplaceAllStringFunc(s, func(q string) string {
+		if identRe.MatchString(q) && !strings.Contains(q, "@") {
+			return q
+		}
+		return "'…'"
+	})
+	return emailRe.ReplaceAllString(s, "<email>")
 }

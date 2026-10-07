@@ -678,9 +678,27 @@ func (b *builder) filters() {
 		SELECT umeta_id FROM ix.usermeta WHERE user_id IN (SELECT id FROM keep_users) %s`, userWhere), dropArgs...)
 
 	// Every option of a kept site except transients.
-	b.exec(`CREATE TABLE keep_options AS SELECT site, option_id FROM ix.options
-		WHERE site IN (SELECT blog_id FROM kept_sites)
-			AND NOT (name LIKE '\_transient\_%' ESCAPE '\' OR name LIKE '\_site\_transient\_%' ESCAPE '\')`)
+	// Every option of a kept site except temporary ones: transients, queues
+	// such as Jetpack Sync's, and names the config excludes.
+	var optConds []string
+	var optArgs []any
+	for _, g := range append(slices.Clone(droppedOptions), b.cfg.Options.Exclude...) {
+		optConds = append(optConds, `name LIKE ? ESCAPE '\'`)
+		optArgs = append(optArgs, globToLike(g))
+	}
+	b.exec(fmt.Sprintf(`CREATE TABLE keep_options AS SELECT site, option_id FROM ix.options
+		WHERE site IN (SELECT blog_id FROM kept_sites) AND NOT (%s)`, strings.Join(optConds, " OR ")), optArgs...)
+}
+
+// droppedOptions are option names that hold temporary data. A * matches any
+// run of characters.
+var droppedOptions = []string{
+	"_transient_*",
+	"_site_transient_*",
+	// Jetpack Sync's outgoing queues. Jetpack rebuilds them, and their
+	// items copy post and user data, emails included. One network had 1.2
+	// million of these rows, 9 GB.
+	"jpsq_*",
 }
 
 // coreEstimates gives the SQL for the kept row count and bytes of each core
@@ -772,7 +790,7 @@ func (b *builder) tables() {
 				b.scalar(`SELECT coalesce(sum(o.bytes), 0) FROM ix.object_rows o JOIN keep k ON k.site = o.site AND k.id = o.object_id WHERE o.tbl = ?`, &tp.Bytes, x.info.name)
 			default:
 				tp.KeptRows, tp.Bytes, tp.Approximate = x.rows, x.info.rowBytes, true
-				if rule.IDs == "" {
+				if rule.IDs == "" && x.rows > 0 {
 					b.warnf(0, "table %s: pass 1 did not index column %s, so the estimate counts the whole table", x.info.name, rule.FilterBy)
 				}
 			}
@@ -888,6 +906,20 @@ func (b *builder) checks() {
 			}
 		}
 	}
+	// One option name pattern taking a large share of the output is
+	// usually a queue, log, or cache that a plugin keeps in options.
+	b.queryRows(`SELECT o.site, regexp_replace(o.name, '[0-9][0-9.]*', '*', 'g') AS pattern, count(*), sum(o.bytes)
+		FROM ix.options o JOIN keep_options k ON k.site = o.site AND k.option_id = o.option_id
+		GROUP BY 1, 2 HAVING sum(o.bytes) > 1048576 ORDER BY 4 DESC`, func(r *sql.Rows) error {
+		var site int
+		var pattern string
+		var n, bytes int64
+		if err := r.Scan(&site, &pattern, &n, &bytes); err != nil {
+			return err
+		}
+		b.warnf(site, "options named %s take %s (%d rows); if they are temporary, list the pattern under options.exclude", pattern, formatBytes(bytes), n)
+		return nil
+	})
 	if b.p.EstimateBytes > b.p.TargetBytes {
 		top := slices.Clone(b.p.Tables)
 		slices.SortFunc(top, func(x, y TablePlan) int { return int(y.Bytes - x.Bytes) })

@@ -45,6 +45,7 @@ type Config struct {
 	Taxonomies      Taxonomies           `yaml:"taxonomies"`
 	Users           Users                `yaml:"users"`
 	Meta            Meta                 `yaml:"meta"`
+	Options         Options              `yaml:"options"`
 	Tables          map[string]TableRule `yaml:"tables"`
 	References      References           `yaml:"references"`
 	Scrub           Scrub                `yaml:"scrub"`
@@ -146,6 +147,13 @@ type Taxonomies struct {
 
 type Users struct {
 	IncludeRoles []string `yaml:"include_roles"`
+}
+
+// Options filters the options table of every kept site.
+type Options struct {
+	// Exclude are option names to drop, in addition to transients and
+	// Jetpack sync queues. A * matches any run of characters.
+	Exclude []string `yaml:"exclude"`
 }
 
 type Meta struct {
