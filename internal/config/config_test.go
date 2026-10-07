@@ -33,9 +33,6 @@ post_types:
 taxonomies:
   prune_unused_flat_terms_over: 500
 
-comments:
-  per_post: 3
-
 users:
   include_roles: [administrator]
 
@@ -81,7 +78,7 @@ func TestParseSpecExample(t *testing.T) {
 	if r := c.Tables["wp_custom_paywall_log"]; r.Action != TableEmpty {
 		t.Errorf("paywall log rule = %+v", r)
 	}
-	if *c.DependencyDepth != 2 || *c.Comments.PerPost != 3 || c.References.ExtraMetaKeys[1] != "hero_video_id" {
+	if *c.DependencyDepth != 2 || c.References.ExtraMetaKeys[1] != "hero_video_id" {
 		t.Errorf("config = %+v", c)
 	}
 }
@@ -91,7 +88,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.TargetSizeMB != 10 || *c.DependencyDepth != 2 || *c.Comments.PerPost != 3 ||
+	if c.TargetSizeMB != 10 || *c.DependencyDepth != 2 ||
 		*c.Taxonomies.PruneUnusedFlatTermsOver != 500 || c.Users.IncludeRoles[0] != "administrator" {
 		t.Errorf("defaults = %+v", c)
 	}
@@ -99,11 +96,11 @@ func TestDefaults(t *testing.T) {
 	if fromConfig || pt.Mode != ModeLatest || pt.Count != 10 {
 		t.Errorf("default post type = %+v", pt)
 	}
-	zero, err := Parse([]byte("dependency_depth: 0\ncomments: {per_post: 0}\n"))
+	zero, err := Parse([]byte("dependency_depth: 0\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *zero.DependencyDepth != 0 || *zero.Comments.PerPost != 0 {
+	if *zero.DependencyDepth != 0 {
 		t.Error("an explicit 0 was replaced by the default")
 	}
 }
@@ -120,6 +117,8 @@ func TestParseErrors(t *testing.T) {
 		"tables: {wp_x: {filter: post_id}}":                                       "filter_by",
 		"unknown_key: 1":                                                          "unknown_key",
 		"dependency_depth: -1":                                                    "0 or more",
+		"comments: {per_post: 3}":                                                 "comments",
+		"scrub: {profile: other}":                                                 "scrub.profile",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))

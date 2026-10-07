@@ -464,10 +464,12 @@ func (b *builder) seedPerTerm(siteID int, typ, tax string, pick config.TaxonomyP
 
 func (b *builder) dependencies() {
 	// Meta keys whose values are followed as post references, per site.
-	b.exec(`CREATE TABLE follow_keys (site INTEGER, meta_key VARCHAR, reason VARCHAR)`)
+	// field_type is set for ACF fields, so validation can tell image and
+	// file fields from relationships.
+	b.exec(`CREATE TABLE follow_keys (site INTEGER, meta_key VARCHAR, reason VARCHAR, field_type VARCHAR)`)
 	for _, s := range b.included {
 		for _, k := range append(slices.Clone(followedMetaKeys), s.cfg.ExtraMetaKeys...) {
-			b.exec(`INSERT INTO follow_keys VALUES (?, ?, ?)`, s.id, k, "meta:"+k)
+			b.exec(`INSERT INTO follow_keys VALUES (?, ?, ?, NULL)`, s.id, k, "meta:"+k)
 		}
 		b.acfKeys(s.id)
 	}
@@ -545,14 +547,15 @@ func (b *builder) dependencies() {
 func (b *builder) acfKeys(siteID int) {
 	type field struct {
 		name     string
+		typ      string
 		subfield bool
 	}
 	var fields []field
-	b.queryRows(fmt.Sprintf(`SELECT f.field_name, f.parent IN (SELECT post_id FROM ix.acf_fields WHERE site = $1)
+	b.queryRows(fmt.Sprintf(`SELECT f.field_name, f.field_type, f.parent IN (SELECT post_id FROM ix.acf_fields WHERE site = $1)
 		FROM ix.acf_fields f WHERE f.site = $1 AND f.field_type IN (%s) AND f.field_name <> ''`, sqlList(acfPostFieldTypes)),
 		func(r *sql.Rows) error {
 			var f field
-			if err := r.Scan(&f.name, &f.subfield); err != nil {
+			if err := r.Scan(&f.name, &f.typ, &f.subfield); err != nil {
 				return err
 			}
 			fields = append(fields, f)
@@ -574,7 +577,7 @@ func (b *builder) acfKeys(siteID int) {
 	for _, k := range keys {
 		for _, f := range fields {
 			if k == f.name || (f.subfield && strings.HasSuffix(k, "_"+f.name)) {
-				b.exec(`INSERT INTO follow_keys VALUES (?, ?, ?)`, siteID, k, "acf:"+k)
+				b.exec(`INSERT INTO follow_keys VALUES (?, ?, ?, ?)`, siteID, k, "acf:"+k, f.typ)
 				break
 			}
 		}
@@ -632,31 +635,15 @@ func (b *builder) filters() {
 		JOIN keep_tt tt ON tt.site = tr.site AND tt.term_taxonomy_id = tr.term_taxonomy_id
 		WHERE EXISTS (SELECT 1 FROM keep k WHERE k.site = tr.site AND k.id = tr.object_id) OR tt.taxonomy = 'link_category'`)
 
-	// The newest approved comments of each kept post, plus their parents.
-	b.exec(`CREATE TABLE keep_comments AS
-		WITH RECURSIVE base AS (
-			SELECT site, comment_id FROM (
-				SELECT c.site, c.comment_id,
-					row_number() OVER (PARTITION BY c.site, c.post_id ORDER BY c.date DESC NULLS LAST, c.comment_id DESC) AS rn
-				FROM ix.comments c JOIN keep k ON k.site = c.site AND k.id = c.post_id
-				WHERE c.approved = '1'
-			) WHERE rn <= ?
-		), anc AS (
-			SELECT site, comment_id FROM base
-			UNION
-			SELECT c.site, c.parent FROM ix.comments c JOIN anc a ON c.site = a.site AND c.comment_id = a.comment_id
-			WHERE c.parent > 0
-		)
-		SELECT DISTINCT site, comment_id FROM anc`, *b.cfg.Comments.PerPost)
-	b.exec(`CREATE TABLE keep_commentmeta AS
-		SELECT cm.site, cm.meta_id FROM ix.commentmeta cm JOIN keep_comments kc ON kc.site = cm.site AND kc.comment_id = cm.comment_id`)
+	// Comments are always removed, so their keep sets stay empty.
+	b.exec(`CREATE TABLE keep_comments (site INTEGER, comment_id BIGINT)`)
+	b.exec(`CREATE TABLE keep_commentmeta (site INTEGER, meta_id BIGINT)`)
 
-	// Users are shared by all sites: authors of kept posts and comments on
-	// any kept site, plus users with the listed roles on a kept site.
+	// Users are shared by all sites: authors of kept posts on any kept
+	// site, plus users with the listed roles on a kept site.
 	b.exec(fmt.Sprintf(`CREATE TABLE keep_users AS
 		SELECT DISTINCT id FROM ix.users WHERE
 			id IN (SELECT p.author FROM ix.posts p JOIN keep k ON k.site = p.site AND k.id = p.id)
-			OR id IN (SELECT c.user_id FROM ix.comments c JOIN keep_comments k ON k.site = c.site AND k.comment_id = c.comment_id WHERE c.user_id > 0)
 			OR id IN (SELECT user_id FROM ix.user_roles WHERE site IN (SELECT blog_id FROM kept_sites) AND role IN (%s))`,
 		sqlList(b.cfg.Users.IncludeRoles)))
 	// User meta of kept users, without the per-site keys of excluded sites,

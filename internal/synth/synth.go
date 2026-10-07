@@ -33,6 +33,9 @@ type Options struct {
 	Triggers bool
 	// Subsite adds the tables of a second multisite site, prefix wp_2_.
 	Subsite bool
+	// PIITable adds a plugin table of newsletter subscribers with email and
+	// IP addresses, which the scrub does not cover.
+	PIITable bool
 }
 
 // Stats counts the rows written per table.
@@ -170,7 +173,7 @@ func (g *gen) build() {
 			login = "admin"
 		}
 		g.add(users, id, login, "$P$Bfakehashfakehashfakehash"+fmt.Sprint(id), login,
-			login+"@example.com", "", base.Format(time.DateTime), "", 0, "Author "+fmt.Sprint(id))
+			login+"@example-newspaper.test", "", base.Format(time.DateTime), "", 0, "Author "+fmt.Sprint(id))
 		role := `a:1:{s:6:"author";b:1;}`
 		if id == 1 {
 			role = `a:1:{s:13:"administrator";b:1;}`
@@ -298,7 +301,7 @@ func (g *gen) build() {
 			for range g.r.IntN(3) {
 				cid := len(comments.rows) + 1
 				cd := date.Add(time.Duration(1+g.r.IntN(72)) * time.Hour).Format(time.DateTime)
-				g.add(comments, cid, id, fmt.Sprintf("Reader %d", cid), fmt.Sprintf("reader%d@example.org", cid),
+				g.add(comments, cid, id, fmt.Sprintf("Reader %d", cid), fmt.Sprintf("reader%d@example-newspaper.test", cid),
 					"", fmt.Sprintf("192.0.2.%d", 1+g.r.IntN(254)), cd, cd, g.sentence(10)+" "+g.trickyText(),
 					0, "1", "Mozilla/5.0 (synthetic)", "comment", 0, 0)
 				if g.r.IntN(2) == 0 {
@@ -332,7 +335,7 @@ func (g *gen) build() {
 		{"home", "https://example-newspaper.test"},
 		{"blogname", "Example Newspaper"},
 		{"blogdescription", g.trickyText()},
-		{"admin_email", "admin@example.com"},
+		{"admin_email", "webmaster@example-newspaper.test"},
 		{"posts_per_page", "10"},
 		{"show_on_front", "page"},
 		{"page_on_front", fmt.Sprint(front)},
@@ -341,6 +344,7 @@ func (g *gen) build() {
 		{"_site_transient_timeout_theme_roots", "1700000000"},
 		{"widget_text", `a:2:{i:2;a:1:{s:4:"text";s:23:"It's <b>bold</b>; isn't";}s:12:"_multiwidget";i:1;}`},
 		{"big_option", strings.Repeat("x", 120*1024)},
+		{prefix + "user_roles", userRoles},
 	}
 	for i, kv := range opts {
 		g.add(options, i+1, kv[0], kv[1], "yes")
@@ -348,19 +352,49 @@ func (g *gen) build() {
 
 	g.add(links, 1, "https://example.org/", "Example link", "", "", "", "Y", 1, 0, base.Format(time.DateTime), "", "", "")
 
+	if g.o.PIITable {
+		subs := &table{name: prefix + "example_subscribers", cols: []string{"id", "subscriber_email", "signup_ip"}, schema: schemaSubscribers}
+		g.tables = append(g.tables, subs)
+		for i := 1; i <= 20; i++ {
+			g.add(subs, i, fmt.Sprintf("subscriber%d@example-newspaper.test", i), fmt.Sprintf("10.1.2.%d", i))
+		}
+	}
+
 	for i := 1; i <= 200; i++ {
 		g.add(logs, i, fmt.Sprintf("event %d: %s", i, g.trickyText()), base.Add(time.Duration(i)*time.Minute).Format(time.DateTime))
 	}
 
 	if g.o.Subsite {
-		blogs := &table{name: prefix + "blogs", cols: []string{"blog_id", "domain", "path"}, schema: schemaBlogs}
+		blogs := &table{name: prefix + "blogs", cols: []string{"blog_id", "site_id", "domain", "path", "registered", "last_updated",
+			"public", "archived", "mature", "spam", "deleted", "lang_id"}, schema: schemaBlogs}
+		network := &table{name: prefix + "site", cols: []string{"id", "domain", "path"}, schema: schemaSite}
+		sitemeta := &table{name: prefix + "sitemeta", cols: []string{"meta_id", "site_id", "meta_key", "meta_value"}, schema: schemaSitemeta}
+		signups := &table{name: prefix + "signups", cols: []string{"signup_id"}, schema: schemaSignups}
+		g.tables = append(g.tables, network, sitemeta, signups)
+		// A network's users table has two extra columns.
+		users.cols = append(users.cols, "spam", "deleted")
+		users.schema = schemaUsers + ",\n  `spam` tinyint(2) NOT NULL DEFAULT 0,\n  `deleted` tinyint(2) NOT NULL DEFAULT 0"
+		for i := range users.rows {
+			users.rows[i] = append(users.rows[i], 0, 0)
+		}
+		g.add(network, 1, "example-newspaper.test", "/")
+		for i, kv := range [][2]string{
+			{"site_name", "Example Newspaper Network"},
+			{"admin_email", "network-admin@example-newspaper.test"},
+			{"site_admins", `a:1:{i:0;s:5:"admin";}`},
+			{"subdomain_install", "0"},
+			{"siteurl", "https://example-newspaper.test/"},
+		} {
+			g.add(sitemeta, i+1, 1, kv[0], kv[1])
+		}
 		sub := prefix + "2_"
 		subPosts := &table{name: sub + "posts", cols: postCols, schema: schemaPosts}
 		subMeta := &table{name: sub + "postmeta", cols: []string{"meta_id", "post_id", "meta_key", "meta_value"}, schema: schemaPostmeta}
 		subOptions := &table{name: sub + "options", cols: []string{"option_id", "option_name", "option_value", "autoload"}, schema: schemaOptions}
 		g.tables = append(g.tables, blogs, subPosts, subMeta, subOptions)
-		g.add(blogs, 1, "example-newspaper.test", "/")
-		g.add(blogs, 2, "example-newspaper.test", "/sports/")
+		reg := base.Format(time.DateTime)
+		g.add(blogs, 1, 1, "example-newspaper.test", "/", reg, reg, 1, 0, 0, 0, 0, 0)
+		g.add(blogs, 2, 1, "example-newspaper.test", "/sports/", reg, reg, 1, 0, 0, 0, 0, 0)
 		d := base.Format(time.DateTime)
 		for id := 1; id <= 3; id++ {
 			g.add(subPosts, id, 1, d, d, "Subsite post", "Subsite post", "", "publish", "open", "open", "",
@@ -370,6 +404,9 @@ func (g *gen) build() {
 		g.add(usermeta, len(usermeta.rows)+1, 2, sub+"capabilities", `a:1:{s:6:"editor";b:1;}`)
 		g.add(subOptions, 1, "siteurl", "https://example-newspaper.test/sports", "yes")
 		g.add(subOptions, 2, "posts_per_page", "5", "yes")
+		g.add(subOptions, 3, "home", "https://example-newspaper.test/sports", "yes")
+		g.add(subOptions, 4, sub+"user_roles", userRoles, "yes")
+		g.add(subOptions, 5, "admin_email", "sports-editor@example-newspaper.test", "yes")
 	}
 
 	// Fill in comment counts and term counts so the data is consistent.
@@ -556,3 +593,23 @@ DELIMITER ;
 /*!50003 SET character_set_results = @saved_cs_results */ ;
 /*!50003 SET collation_connection  = @saved_col_connection */ ;
 `
+
+// userRoles is a trimmed wp_user_roles option with the core roles the
+// sandbox needs.
+var userRoles = func() string {
+	role := func(name, label string, caps ...string) string {
+		var c strings.Builder
+		for _, cp := range caps {
+			fmt.Fprintf(&c, "s:%d:\"%s\";b:1;", len(cp), cp)
+		}
+		return fmt.Sprintf(`s:%d:"%s";a:2:{s:4:"name";s:%d:"%s";s:12:"capabilities";a:%d:{%s}}`,
+			len(name), name, len(label), label, len(caps), c.String())
+	}
+	roles := []string{
+		role("administrator", "Administrator", "manage_options", "edit_posts", "edit_others_posts", "publish_posts", "read", "level_10"),
+		role("editor", "Editor", "edit_posts", "edit_others_posts", "publish_posts", "read", "level_7"),
+		role("author", "Author", "edit_posts", "publish_posts", "read", "level_2"),
+		role("subscriber", "Subscriber", "read", "level_0"),
+	}
+	return fmt.Sprintf("a:%d:{%s}", len(roles), strings.Join(roles, ""))
+}()

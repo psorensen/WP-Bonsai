@@ -30,7 +30,6 @@ post_types:
     statuses: { publish: all, draft: 2 }
   page: { mode: all }
   product: { mode: latest, count: 7 }
-comments: { per_post: 2 }
 tables:
   wp_example_log: empty
   wp_example_bylines: { filter_by: post_id }

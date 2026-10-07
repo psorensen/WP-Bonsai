@@ -32,6 +32,7 @@ bonsai build   <dump>  --config bonsai.yml --out slim.sql   # pass 1 if needed, 
 - **Memory stays flat.** Pass 1 and pass 2 must stream. Never load a whole table or the whole file into memory. Memory use must not grow with dump size beyond the ID sets.
 - **The parser is the foundation.** Every parser change needs a round-trip test: parse, write back unchanged, import both into MariaDB, and compare row counts and checksums per table.
 - **Selection logic lives in SQL on the DuckDB index**, not in Go loops, unless there is a clear reason.
+- **Comments are always removed.** `wp_comments` and `wp_commentmeta` keep their schema and lose their rows on every site (decided 2026-10-06). This overrides the comment rule in SPEC.md.
 - **Keep every post meta row of a kept post, unchanged.** Size savings come from keeping fewer posts and post types, never from trimming or rewriting meta values. This overrides the noise-key rule in SPEC.md.
 - **No GPL code in the engine.** Call the scrubber through WP-CLI; do not port its PHP into Go. Check a dependency's license before adding it. MIT, BSD, and Apache 2.0 are fine.
 - **Keep client details out of this repo.** No client names, table names, or configs. Examples use `example-newspaper`.
@@ -48,6 +49,6 @@ Work one milestone at a time. Each ends with passing tests and a short summary f
 5. Sandbox finish: scrub, recount, validation report.
 6. Full run on a large dump, with time and peak memory recorded.
 
-## Open questions that affect the code
+## Scrubber
 
-- Which Fueled scrubber package milestone 5 calls, and its WP-CLI command.
+Milestone 5 runs 10up WP Scrubber 1.0.3 (`wp scrub all`, GPL-2.0) inside the sandbox image, loaded as a must-use plugin. Bonsai only calls it through WP-CLI. Bonsai then replaces site and network admin emails, adds a local admin login `bonsai` / `bonsai`, and validates the result. If the scrubber or any failing check stops the run, no output is written.

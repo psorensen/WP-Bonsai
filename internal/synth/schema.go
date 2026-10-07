@@ -172,6 +172,46 @@ const schemaLog = "  `log_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n" +
 	"  PRIMARY KEY (`log_id`)"
 
 const schemaBlogs = "  `blog_id` bigint(20) NOT NULL AUTO_INCREMENT,\n" +
+	"  `site_id` bigint(20) NOT NULL DEFAULT 0,\n" +
 	"  `domain` varchar(200) NOT NULL DEFAULT '',\n" +
 	"  `path` varchar(100) NOT NULL DEFAULT '',\n" +
-	"  PRIMARY KEY (`blog_id`)"
+	"  `registered` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',\n" +
+	"  `last_updated` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',\n" +
+	"  `public` tinyint(2) NOT NULL DEFAULT 1,\n" +
+	"  `archived` tinyint(2) NOT NULL DEFAULT 0,\n" +
+	"  `mature` tinyint(2) NOT NULL DEFAULT 0,\n" +
+	"  `spam` tinyint(2) NOT NULL DEFAULT 0,\n" +
+	"  `deleted` tinyint(2) NOT NULL DEFAULT 0,\n" +
+	"  `lang_id` int(11) NOT NULL DEFAULT 0,\n" +
+	"  PRIMARY KEY (`blog_id`),\n" +
+	"  KEY `domain` (`domain`(50),`path`(5))"
+
+const schemaSite = "  `id` bigint(20) NOT NULL AUTO_INCREMENT,\n" +
+	"  `domain` varchar(200) NOT NULL DEFAULT '',\n" +
+	"  `path` varchar(100) NOT NULL DEFAULT '',\n" +
+	"  PRIMARY KEY (`id`)"
+
+const schemaSitemeta = "  `meta_id` bigint(20) NOT NULL AUTO_INCREMENT,\n" +
+	"  `site_id` bigint(20) NOT NULL DEFAULT 0,\n" +
+	"  `meta_key` varchar(255) DEFAULT NULL,\n" +
+	"  `meta_value` longtext DEFAULT NULL,\n" +
+	"  PRIMARY KEY (`meta_id`),\n" +
+	"  KEY `meta_key` (`meta_key`(191))"
+
+const schemaSignups = "  `signup_id` bigint(20) NOT NULL AUTO_INCREMENT,\n" +
+	"  `domain` varchar(200) NOT NULL DEFAULT '',\n" +
+	"  `path` varchar(100) NOT NULL DEFAULT '',\n" +
+	"  `title` longtext NOT NULL,\n" +
+	"  `user_login` varchar(60) NOT NULL DEFAULT '',\n" +
+	"  `user_email` varchar(100) NOT NULL DEFAULT '',\n" +
+	"  `registered` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',\n" +
+	"  `activated` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',\n" +
+	"  `active` tinyint(1) NOT NULL DEFAULT 0,\n" +
+	"  `activation_key` varchar(50) NOT NULL DEFAULT '',\n" +
+	"  `meta` longtext DEFAULT NULL,\n" +
+	"  PRIMARY KEY (`signup_id`)"
+
+const schemaSubscribers = "  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n" +
+	"  `subscriber_email` varchar(100) NOT NULL DEFAULT '',\n" +
+	"  `signup_ip` varchar(45) NOT NULL DEFAULT '',\n" +
+	"  PRIMARY KEY (`id`)"

@@ -32,7 +32,6 @@ const (
 const (
 	DefaultTargetSizeMB     = 10
 	DefaultDependencyDepth  = 2
-	DefaultCommentsPerPost  = 3
 	DefaultPruneFlatTermsAt = 500
 )
 
@@ -44,7 +43,6 @@ type Config struct {
 	DefaultPostType *PostType            `yaml:"default_post_type"`
 	PostTypes       map[string]*PostType `yaml:"post_types"`
 	Taxonomies      Taxonomies           `yaml:"taxonomies"`
-	Comments        Comments             `yaml:"comments"`
 	Users           Users                `yaml:"users"`
 	Meta            Meta                 `yaml:"meta"`
 	Tables          map[string]TableRule `yaml:"tables"`
@@ -146,10 +144,6 @@ type Taxonomies struct {
 	PruneUnusedFlatTermsOver *int `yaml:"prune_unused_flat_terms_over"`
 }
 
-type Comments struct {
-	PerPost *int `yaml:"per_post"`
-}
-
 type Users struct {
 	IncludeRoles []string `yaml:"include_roles"`
 }
@@ -166,8 +160,14 @@ type References struct {
 	ExtraMetaKeys []string `yaml:"extra_meta_keys"`
 }
 
+// Scrub configures the sandbox scrub step. The fueled-default profile
+// runs 10up WP Scrubber's "wp scrub all" and then Bonsai's own steps.
 type Scrub struct {
 	Profile string `yaml:"profile"`
+	// AllowedDomains and AllowedEmails are users the scrubber leaves
+	// unchanged, in addition to its built-in 10up.com and get10up.com.
+	AllowedDomains []string `yaml:"allowed_domains"`
+	AllowedEmails  []string `yaml:"allowed_emails"`
 }
 
 // Amount is "all" or a non-negative number.
@@ -302,9 +302,6 @@ func (c *Config) fillDefaults() {
 	if c.Taxonomies.PruneUnusedFlatTermsOver == nil {
 		c.Taxonomies.PruneUnusedFlatTermsOver = intPtr(DefaultPruneFlatTermsAt)
 	}
-	if c.Comments.PerPost == nil {
-		c.Comments.PerPost = intPtr(DefaultCommentsPerPost)
-	}
 	if c.Users.IncludeRoles == nil {
 		c.Users.IncludeRoles = []string{"administrator"}
 	}
@@ -386,8 +383,8 @@ func (c *Config) check() error {
 		}
 		checkTypes(path, sc.DefaultPostType, sc.PostTypes)
 	}
-	if *c.Comments.PerPost < 0 {
-		bad("comments.per_post: must be 0 or more")
+	if c.Scrub.Profile != "fueled-default" {
+		bad("scrub.profile: %q is not a known profile; use fueled-default", c.Scrub.Profile)
 	}
 	if *c.Taxonomies.PruneUnusedFlatTermsOver < 0 {
 		bad("taxonomies.prune_unused_flat_terms_over: must be 0 or more")

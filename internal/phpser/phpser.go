@@ -5,7 +5,9 @@ package phpser
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 )
 
 // Kind is the PHP type of a Value.
@@ -206,4 +208,16 @@ func (v Value) Lookup(key string) (Value, bool) {
 		}
 	}
 	return Value{}, false
+}
+
+// SerializeInts writes a PHP serialized list of integers, such as WordPress
+// stores in the sticky_posts option.
+func SerializeInts(ids []int64) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "a:%d:{", len(ids))
+	for i, id := range ids {
+		fmt.Fprintf(&b, "i:%d;i:%d;", i, id)
+	}
+	b.WriteString("}")
+	return b.String()
 }

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/psorensen/WP-Bonsai/internal/finish"
 	"github.com/psorensen/WP-Bonsai/internal/index"
 	"github.com/psorensen/WP-Bonsai/internal/plan"
 	"github.com/psorensen/WP-Bonsai/internal/slim"
@@ -69,13 +71,14 @@ func buildCmd(ctx context.Context, args []string) error {
 		return err
 	}
 
-	// Pass 2, into a temporary file that replaces -out only on success.
+	// Pass 2, into a private file in the work directory. It holds
+	// unscrubbed data, so it is always deleted, and it never becomes -out.
 	d, err := openDump(dumpPath)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(*out), ".bonsai-*.sql")
+	tmp, err := os.CreateTemp(*work, "pass2-*.sql")
 	if err != nil {
 		return err
 	}
@@ -94,23 +97,64 @@ func buildCmd(ctx context.Context, args []string) error {
 		for _, m := range res.Mismatches {
 			fmt.Fprintln(os.Stderr, "  mismatch:", m)
 		}
-		return fmt.Errorf("pass 2 wrote different row counts than the plan for %d tables; the output was not saved", len(res.Mismatches))
+		return fmt.Errorf("pass 2 wrote different row counts than the plan for %d tables; nothing was written", len(res.Mismatches))
 	}
-	if err := os.Rename(tmp.Name(), *out); err != nil {
-		return err
-	}
-
 	var written int64
 	for _, t := range res.Tables {
 		written += t.Written
 	}
-	fmt.Printf("Pass 2: wrote %s (%d rows) to %s in %s; the estimate was %s.\n",
-		plan.FormatBytes(res.Bytes), written, *out, time.Since(pass2).Round(time.Second), plan.FormatBytes(p.EstimateBytes))
-	fmt.Printf("Done in %s.\n\n", time.Since(start).Round(time.Second))
-	fmt.Println("WARNING: this file is not scrubbed yet. It still holds personal data from production:")
-	fmt.Println("user accounts, emails, and comment authors. Do not share it. The scrub step is milestone 5.")
+	fmt.Printf("Pass 2: kept %s (%d rows) in %s; the estimate was %s.\n",
+		plan.FormatBytes(res.Bytes), written, time.Since(pass2).Round(time.Second), plan.FormatBytes(p.EstimateBytes))
+
+	// Sandbox finish: scrub, recount, validate, export.
+	finishStart := time.Now()
+	report, ferr := finish.Run(ctx, tmp.Name(), *out, p, cfg, finish.Options{Log: func(m string) { fmt.Println("Sandbox:", m) }})
+	reportPath := strings.TrimSuffix(*out, filepath.Ext(*out)) + ".report.json"
+	if report != nil {
+		if err := report.WriteJSON(reportPath); err != nil {
+			return err
+		}
+		printReport(report, reportPath)
+	}
+	if ferr != nil {
+		return ferr
+	}
+	fmt.Printf("\nDone in %s (sandbox %s). Wrote %s (%s).\n", time.Since(start).Round(time.Second),
+		time.Since(finishStart).Round(time.Second), *out, plan.FormatBytes(report.OutputBytes))
+	fmt.Printf("Log in locally as %q with password %q.\n", report.Admin, finish.AdminPassword)
 	fmt.Printf("\nThe raw dump at %s holds production data. Delete it when you no longer need it.\n", dumpPath)
 	return nil
+}
+
+func printReport(r *finish.Report, path string) {
+	fmt.Printf("\nValidation: %s (full report: %s)\n", strings.ToUpper(r.Status), path)
+	for _, c := range r.Checks {
+		if c.Status == finish.Pass {
+			continue
+		}
+		where := ""
+		if c.Site != 0 {
+			where = fmt.Sprintf("site %d: ", c.Site)
+		}
+		fmt.Printf("  %-7s %s%s (%d)", c.Status, where, c.Name, c.Count)
+		if c.Detail != "" {
+			fmt.Printf(": %s", c.Detail)
+		}
+		fmt.Println()
+	}
+	passed := 0
+	for _, c := range r.Checks {
+		if c.Status == finish.Pass {
+			passed++
+		}
+	}
+	fmt.Printf("  %d checks passed.\n", passed)
+	if len(r.AfterImport) > 0 {
+		fmt.Println("After importing locally, with the project's plugins active, run:")
+		for _, c := range r.AfterImport {
+			fmt.Println("  " + c)
+		}
+	}
 }
 
 // indexMatches reports whether indexPath holds an index of the current

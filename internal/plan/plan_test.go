@@ -31,8 +31,6 @@ post_types:
     count: 7
   obituary:
     mode: none
-comments:
-  per_post: 1
 tables:
   wp_example_log: empty
   wp_example_bylines: { filter_by: post_id }
@@ -218,8 +216,8 @@ func TestFilters(t *testing.T) {
 	if n := count(t, p, `SELECT count(*) FROM keep_postmeta JOIN ix.postmeta m USING (meta_id) WHERE m.post_id NOT IN (SELECT id FROM keep)`); n != 0 {
 		t.Errorf("%d meta rows of dropped posts kept", n)
 	}
-	if n := count(t, p, `SELECT max(n) FROM (SELECT count(*) AS n FROM keep_comments JOIN ix.comments c USING (comment_id) GROUP BY c.post_id)`); n > 1 {
-		t.Errorf("a post kept %d comments, want at most 1", n)
+	if n := count(t, p, `SELECT count(*) FROM keep_comments`); n != 0 {
+		t.Errorf("%d comments kept; comments are always removed", n)
 	}
 	if n := count(t, p, `SELECT count(*) FROM ix.posts p JOIN keep USING (id) WHERE p.author NOT IN (SELECT id FROM keep_users)`); n != 0 {
 		t.Errorf("%d kept posts have an author who was not kept", n)
@@ -239,6 +237,11 @@ func TestFilters(t *testing.T) {
 	for _, tp := range p.Tables {
 		tables[tp.Name] = tp
 		sum += tp.Bytes
+	}
+	for _, name := range []string{"wp_comments", "wp_commentmeta"} {
+		if tp := tables[name]; tp.Rule.Action != config.TableEmpty || tp.KeptRows != 0 {
+			t.Errorf("%s = %+v, want emptied", name, tp)
+		}
 	}
 	if r := tables["wp_example_log"].Rule; r.Action != config.TableEmpty || r.Source != "config" {
 		t.Errorf("wp_example_log rule = %+v", r)
@@ -315,7 +318,7 @@ sites:
 	if tp := ta["wp_2_posts"]; tp.Rule.Action != ActionCore || tp.Site != 2 || tp.KeptRows != 3 {
 		t.Errorf("wp_2_posts = %+v", tp)
 	}
-	if tp := ta["wp_2_options"]; tp.Rule.Action != ActionCore || tp.KeptRows != 2 {
+	if tp := ta["wp_2_options"]; tp.Rule.Action != ActionCore || tp.KeptRows != 5 {
 		t.Errorf("wp_2_options = %+v", tp)
 	}
 	if r := ta["wp_blogs"].Rule; r.Action != config.TableKeep || r.Source != "multisite" {

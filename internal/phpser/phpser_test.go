@@ -46,3 +46,13 @@ func FuzzUnserialize(f *testing.F) {
 		}
 	})
 }
+
+func TestSerializeInts(t *testing.T) {
+	got := SerializeInts([]int64{5, 12})
+	if got != "a:2:{i:0;i:5;i:1;i:12;}" {
+		t.Errorf("SerializeInts = %s", got)
+	}
+	if _, err := Unserialize([]byte(got)); err != nil {
+		t.Error(err)
+	}
+}

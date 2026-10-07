@@ -144,6 +144,9 @@ func (r *resolver) resolve(t tableInfo) (Rule, error) {
 		return Rule{Action: ActionDrop, Source: "sites", Note: fmt.Sprintf("site %d is excluded", t.site)}, nil
 	}
 	if t.role != "" {
+		if t.site != 0 && (t.role == "comments" || t.role == "commentmeta") {
+			return Rule{Action: config.TableEmpty, Source: "core", Note: "comments are always removed"}, nil
+		}
 		if t.site != 0 {
 			return Rule{Action: ActionCore, Source: "core"}, nil
 		}

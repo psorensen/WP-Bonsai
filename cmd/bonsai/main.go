@@ -24,8 +24,9 @@ Commands:
   plan        Build the keep set from the index and a config, and estimate
               the output size. Writes nothing.
   build       Pass 1 if the work directory has no index of this dump, then
-              plan and pass 2. Writes the slim dump. Deletes the index
-              afterwards unless -keep-work is set.
+              plan, pass 2, and the sandbox finish in Docker: scrub, recount,
+              and validate. Writes the scrubbed dump and a .report.json file
+              next to it. Deletes the index afterwards unless -keep-work is set.
   roundtrip   Parse a dump and write it back out. With -max-insert-bytes 0 the
               output must match the input byte for byte. Prints statistics.
 
