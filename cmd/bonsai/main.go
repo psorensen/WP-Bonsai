@@ -3,25 +3,25 @@
 package main
 
 import (
-	"bufio"
-	"compress/gzip"
-	"errors"
-	"flag"
+	"context"
 	"fmt"
-	"io"
 	"os"
+	"os/signal"
 	"strings"
-	"time"
-
-	"github.com/psorensen/WP-Bonsai/internal/sqldump"
 )
 
 const usage = `Usage:
+  bonsai index     <dump> [-out work/]
+  bonsai inspect   [work/]
   bonsai roundtrip <dump> [-o out.sql] [-max-insert-bytes N]
 
 Commands:
+  index       Pass 1. Read the dump once and write work/index.duckdb.
+  inspect     Print the inventory of an index as JSON.
   roundtrip   Parse a dump and write it back out. With -max-insert-bytes 0 the
               output must match the input byte for byte. Prints statistics.
+
+Dumps can be .sql or .sql.gz files.
 `
 
 func main() {
@@ -29,8 +29,15 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	var err error
 	switch os.Args[1] {
+	case "index":
+		err = indexCmd(ctx, os.Args[2:])
+	case "inspect":
+		err = inspectCmd(ctx, os.Args[2:])
 	case "roundtrip":
 		err = roundtrip(os.Args[2:])
 	case "-h", "--help", "help":
@@ -46,89 +53,8 @@ func main() {
 	}
 }
 
-func roundtrip(args []string) error {
-	fs := flag.NewFlagSet("roundtrip", flag.ExitOnError)
-	out := fs.String("o", "", "write the output to this file (default: discard)")
-	max := fs.Int("max-insert-bytes", 0, "regroup INSERT rows into statements of about this size; 0 copies the input unchanged")
-	if err := fs.Parse(reorder(args)); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return errors.New("roundtrip needs one dump file")
-	}
-
-	in, closeIn, err := openDump(fs.Arg(0))
-	if err != nil {
-		return err
-	}
-	defer closeIn()
-
-	var dst io.Writer = io.Discard
-	if *out != "" {
-		f, err := os.Create(*out)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		dst = f
-	}
-
-	start := time.Now()
-	p := sqldump.NewParser(in)
-	w := sqldump.NewWriter(dst, *max)
-	rows := map[string]int{}
-	var statements int
-	for {
-		it, err := p.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		switch it.Kind {
-		case sqldump.Row:
-			rows[it.Table]++
-		case sqldump.Statement:
-			statements++
-		}
-		if err := w.Write(it); err != nil {
-			return err
-		}
-	}
-	if err := w.Flush(); err != nil {
-		return err
-	}
-
-	elapsed := time.Since(start)
-	mb := float64(p.Offset()) / (1 << 20)
-	fmt.Printf("read %.1f MB in %s (%.0f MB/s), %d statements\n", mb, elapsed.Round(time.Millisecond), mb/elapsed.Seconds(), statements)
-	for table, n := range rows {
-		fmt.Printf("  %-40s %d rows\n", table, n)
-	}
-	return nil
-}
-
-// openDump opens a .sql or .sql.gz file.
-func openDump(path string) (io.Reader, func(), error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	r := bufio.NewReaderSize(f, 1<<20)
-	if strings.HasSuffix(path, ".gz") {
-		gz, err := gzip.NewReader(r)
-		if err != nil {
-			f.Close()
-			return nil, nil, err
-		}
-		return gz, func() { gz.Close(); f.Close() }, nil
-	}
-	return r, func() { f.Close() }, nil
-}
-
 // reorder moves flags in front of positional arguments, so that
-// "bonsai roundtrip dump.sql -o out.sql" works.
+// "bonsai index dump.sql -out work" works.
 func reorder(args []string) []string {
 	var flags, pos []string
 	for i := 0; i < len(args); i++ {

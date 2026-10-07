@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"time"
 )
@@ -30,6 +31,8 @@ type Options struct {
 	HexBlob bool
 	// Triggers adds a trigger wrapped in DELIMITER commands.
 	Triggers bool
+	// Subsite adds the tables of a second multisite site, prefix wp_2_.
+	Subsite bool
 }
 
 // Stats counts the rows written per table.
@@ -152,7 +155,10 @@ func (g *gen) build() {
 	comments := &table{name: prefix + "comments", cols: commentCols, schema: schemaComments}
 	commentmeta := &table{name: prefix + "commentmeta", cols: []string{"meta_id", "comment_id", "meta_key", "meta_value"}, schema: schemaCommentmeta}
 	links := &table{name: prefix + "links", cols: linkCols, schema: schemaLinks}
-	g.tables = []*table{commentmeta, comments, links, options, postmeta, posts, termRel, termTax, termmeta, terms, usermeta, users}
+	bylines := &table{name: prefix + "example_bylines", cols: []string{"byline_id", "post_id", "byline"}, schema: schemaBylines}
+	logs := &table{name: prefix + "example_log", cols: []string{"log_id", "message", "created"}, schema: schemaLog}
+	g.tables = []*table{commentmeta, comments, links, options, postmeta, posts, termRel, termTax, termmeta, terms, usermeta, users, bylines, logs}
+	defer func() { slices.SortFunc(g.tables, func(a, b *table) int { return strings.Compare(a.name, b.name) }) }()
 
 	base := time.Date(2015, 1, 1, 8, 0, 0, 0, time.UTC)
 
@@ -198,14 +204,19 @@ func (g *gen) build() {
 	postID := 0
 	nextPost := func() int { postID++; return postID }
 	var attachments []int
-	addPost := func(typ, status, title, content string, parent, author int, date time.Time, mime string) int {
+	addPostFull := func(typ, status, title, content, excerpt, slug string, parent, author int, date time.Time, mime string) int {
 		id := nextPost()
-		slug := fmt.Sprintf("%s-%d", strings.ReplaceAll(typ, "_", "-"), id)
+		if slug == "" {
+			slug = fmt.Sprintf("%s-%d", strings.ReplaceAll(typ, "_", "-"), id)
+		}
 		d := date.Format(time.DateTime)
-		g.add(posts, id, author, d, d, content, title, g.trickyText(), status, "open", "open", "",
+		g.add(posts, id, author, d, d, content, title, excerpt, status, "open", "open", "",
 			slug, "", "", d, d, "", parent, fmt.Sprintf("https://example-newspaper.test/?p=%d", id),
 			0, typ, mime, 0)
 		return id
+	}
+	addPost := func(typ, status, title, content string, parent, author int, date time.Time, mime string) int {
+		return addPostFull(typ, status, title, content, g.trickyText(), "", parent, author, date, mime)
 	}
 
 	for i := 0; i < g.o.Posts/5+1; i++ {
@@ -217,6 +228,14 @@ func (g *gen) build() {
 			800+g.r.IntN(800), 600+g.r.IntN(600), len(fmt.Sprintf("2020/01/image-%d.jpg", i)), fmt.Sprintf("2020/01/image-%d.jpg", i)))
 		g.add(postmeta, len(postmeta.rows)+1, id, "_wp_attachment_metadata", meta)
 	}
+
+	// ACF field definitions, stored the way ACF 5 stores them.
+	group := addPostFull("acf-field-group", "publish", "Story fields",
+		`a:2:{s:8:"location";a:0:{}s:8:"position";s:6:"normal";}`, "story-fields", "group_5f1a2b3c4d000", 0, 1, base, "")
+	addPostFull("acf-field", "publish", "Gallery",
+		`a:3:{s:4:"type";s:7:"gallery";s:13:"return_format";s:2:"id";s:8:"required";i:0;}`, "gallery", "field_5f1a2b3c4d5e6", group, 1, base, "")
+	addPostFull("acf-field", "publish", "Related story",
+		`a:2:{s:4:"type";s:11:"post_object";s:9:"post_type";a:1:{i:0;s:4:"post";}}`, "related_story_id", "field_5f1a2b3c4d5e7", group, 1, base, "")
 
 	types := []string{"post", "post", "post", "post", "page", "product", "obituary"}
 	statuses := []string{"publish", "publish", "publish", "publish", "draft", "future", "pitch", "private"}
@@ -254,6 +273,10 @@ func (g *gen) build() {
 		}
 		if len(published) > 1 && g.r.IntN(4) == 0 {
 			g.add(postmeta, len(postmeta.rows)+1, id, "related_story_id", fmt.Sprint(published[g.r.IntN(len(published)-1)]))
+			g.add(postmeta, len(postmeta.rows)+1, id, "_related_story_id", "field_5f1a2b3c4d5e7")
+		}
+		if g.r.IntN(3) == 0 {
+			g.add(bylines, len(bylines.rows)+1, id, fmt.Sprintf("By Author %d", 1+g.r.IntN(nUsers)))
 		}
 		if g.r.IntN(8) == 0 {
 			g.add(postmeta, len(postmeta.rows)+1, id, "notes", g.trickyText())
@@ -324,6 +347,29 @@ func (g *gen) build() {
 	}
 
 	g.add(links, 1, "https://example.org/", "Example link", "", "", "", "Y", 1, 0, base.Format(time.DateTime), "", "", "")
+
+	for i := 1; i <= 200; i++ {
+		g.add(logs, i, fmt.Sprintf("event %d: %s", i, g.trickyText()), base.Add(time.Duration(i)*time.Minute).Format(time.DateTime))
+	}
+
+	if g.o.Subsite {
+		blogs := &table{name: prefix + "blogs", cols: []string{"blog_id", "domain", "path"}, schema: schemaBlogs}
+		sub := prefix + "2_"
+		subPosts := &table{name: sub + "posts", cols: postCols, schema: schemaPosts}
+		subMeta := &table{name: sub + "postmeta", cols: []string{"meta_id", "post_id", "meta_key", "meta_value"}, schema: schemaPostmeta}
+		subOptions := &table{name: sub + "options", cols: []string{"option_id", "option_name", "option_value", "autoload"}, schema: schemaOptions}
+		g.tables = append(g.tables, blogs, subPosts, subMeta, subOptions)
+		g.add(blogs, 1, "example-newspaper.test", "/")
+		g.add(blogs, 2, "example-newspaper.test", "/sports/")
+		d := base.Format(time.DateTime)
+		for id := 1; id <= 3; id++ {
+			g.add(subPosts, id, 1, d, d, "Subsite post", "Subsite post", "", "publish", "open", "open", "",
+				fmt.Sprintf("sub-%d", id), "", "", d, d, "", 0, "", 0, "post", "", 0)
+			g.add(subMeta, id, id, "_edit_lock", "1:1")
+		}
+		g.add(subOptions, 1, "siteurl", "https://example-newspaper.test/sports", "yes")
+		g.add(subOptions, 2, "posts_per_page", "5", "yes")
+	}
 
 	// Fill in comment counts and term counts so the data is consistent.
 	commentCount := map[int]int{}

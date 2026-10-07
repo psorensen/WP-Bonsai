@@ -159,3 +159,19 @@ const schemaLinks = "  `link_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"
 	"  `link_rss` varchar(255) NOT NULL DEFAULT '',\n" +
 	"  PRIMARY KEY (`link_id`),\n" +
 	"  KEY `link_visible` (`link_visible`)"
+
+const schemaBylines = "  `byline_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n" +
+	"  `post_id` bigint(20) unsigned NOT NULL DEFAULT 0,\n" +
+	"  `byline` varchar(255) NOT NULL DEFAULT '',\n" +
+	"  PRIMARY KEY (`byline_id`),\n" +
+	"  KEY `post_id` (`post_id`)"
+
+const schemaLog = "  `log_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n" +
+	"  `message` text NOT NULL,\n" +
+	"  `created` datetime NOT NULL,\n" +
+	"  PRIMARY KEY (`log_id`)"
+
+const schemaBlogs = "  `blog_id` bigint(20) NOT NULL AUTO_INCREMENT,\n" +
+	"  `domain` varchar(200) NOT NULL DEFAULT '',\n" +
+	"  `path` varchar(100) NOT NULL DEFAULT '',\n" +
+	"  PRIMARY KEY (`blog_id`)"
