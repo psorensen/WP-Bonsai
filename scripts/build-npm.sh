@@ -37,6 +37,7 @@ build_platform() {
   (cd "$root" && CGO_ENABLED=1 GOOS="$goos" GOARCH="$goarch" CC="$cc" \
     go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$dir/bin/bonsai" ./cmd/bonsai)
   chmod 755 "$dir/bin/bonsai"
+  cp "$root/LICENSE" "$dir/"
 
   cat > "$dir/package.json" <<EOF
 {
@@ -44,10 +45,10 @@ build_platform() {
   "version": "$version",
   "description": "The bonsai binary for $platform. Install wp-bonsai instead.",
   "repository": { "type": "git", "url": "git+https://github.com/psorensen/WP-Bonsai.git" },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "os": ["$os"],
   "cpu": ["$cpu"],
-  "files": ["bin/bonsai"]
+  "files": ["bin/bonsai", "LICENSE"]
 }
 EOF
 }
@@ -58,7 +59,7 @@ build_main() {
   mkdir -p "$dir/bin"
   cp "$root/npm/wp-bonsai/bin/bonsai.js" "$dir/bin/"
   chmod 755 "$dir/bin/bonsai.js"
-  cp "$root/README.md" "$dir/"
+  cp "$root/README.md" "$root/LICENSE" "$dir/"
   # Set the package version and pin every platform package to it.
   node -e '
     const fs = require("fs");

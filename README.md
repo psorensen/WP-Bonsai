@@ -209,3 +209,7 @@ go run ./cmd/synthdump -posts 5000 -subsite -o synthetic.sql   # generate a synt
 ```
 
 The design is in [SPEC.md](SPEC.md), and the working rules for contributors are in [CLAUDE.md](CLAUDE.md). Releases are described in [docs/releasing.md](docs/releasing.md).
+
+## License
+
+Bonsai is released under the [MIT License](LICENSE). The sandbox image downloads 10up WP Scrubber, which is licensed separately under GPL-2.0 and is not part of Bonsai.

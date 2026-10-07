@@ -5,9 +5,9 @@
   "keywords": ["wordpress", "database", "mysql", "dump", "scrub", "multisite", "local-development"],
   "homepage": "https://github.com/psorensen/WP-Bonsai#readme",
   "repository": { "type": "git", "url": "git+https://github.com/psorensen/WP-Bonsai.git" },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "bin": { "bonsai": "bin/bonsai.js" },
-  "files": ["bin/bonsai.js", "README.md"],
+  "files": ["bin/bonsai.js", "README.md", "LICENSE"],
   "engines": { "node": ">=18" },
   "optionalDependencies": {
     "wp-bonsai-darwin-arm64": "0.0.0",
