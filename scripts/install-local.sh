@@ -58,15 +58,22 @@ fi
 echo "Installing with npm."
 # The main package lists all four platform packages as optional. Only the
 # local one is installed here; npm skips the others.
-npm install -g "${prefix[@]}" --no-audit --no-fund \
+# ${prefix[@]+...} keeps an empty array legal under set -u in Bash 3.2,
+# the version macOS ships.
+npm install -g ${prefix[@]+"${prefix[@]}"} --no-audit --no-fund \
   "./wp-bonsai-$platform-$version.tgz" "./wp-bonsai-$version.tgz"
 
-bin="bonsai"
-if [ -n "${BONSAI_NPM_PREFIX:-}" ]; then
-  bin="$BONSAI_NPM_PREFIX/bin/bonsai"
-fi
+# Run the installed copy by its full path, and warn when npm's global
+# folder is not on PATH.
+bindir="$(npm prefix -g ${prefix[@]+"${prefix[@]}"})/bin"
 echo
-"$bin" version
+"$bindir/bonsai" version
+case ":$PATH:" in
+  *":$bindir:"*) ;;
+  *) echo
+     echo "Note: $bindir is not on your PATH, so the bonsai command will not be found."
+     echo "Add it to your shell profile: export PATH=\"$bindir:\$PATH\"" ;;
+esac
 cat <<EOF
 
 Installed. Next:
