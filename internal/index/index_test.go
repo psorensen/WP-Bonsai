@@ -3,6 +3,7 @@ package index
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -67,28 +68,49 @@ func TestInventory(t *testing.T) {
 				t.Errorf("wp_example_log role = %q", r)
 			}
 
-			// Post counts come only from the main site.
+			wantSites := 1
+			if o.Subsite {
+				wantSites = 2
+			}
+			if len(inv.Sites) != wantSites {
+				t.Fatalf("%d sites, want %d", len(inv.Sites), wantSites)
+			}
+			site := &inv.Sites[0]
+			if site.BlogID != 1 || site.Prefix != "wp_" {
+				t.Errorf("site 1 = %d %q", site.BlogID, site.Prefix)
+			}
+			if o.Subsite {
+				sub := inv.Sites[1]
+				if sub.BlogID != 2 || sub.Prefix != "wp_2_" || sub.Path != "/sports/" || len(sub.PostTypes) != 1 || sub.PostTypes[0].Count != 3 {
+					t.Errorf("site 2 = %+v", sub)
+				}
+				if sub.Options.PostsPerPage == nil || *sub.Options.PostsPerPage != 5 {
+					t.Errorf("site 2 posts_per_page = %v", sub.Options.PostsPerPage)
+				}
+			}
+
+			// Post counts of site 1 come only from wp_posts.
 			var posts int64
-			for _, pt := range inv.PostTypes {
+			for _, pt := range site.PostTypes {
 				posts += pt.Count
 			}
 			if posts != int64(stats["wp_posts"]) {
 				t.Errorf("post types add up to %d posts, want %d", posts, stats["wp_posts"])
 			}
-			pt := findType(inv, "post")
-			if pt == nil || pt.Statuses["publish"] == 0 || pt.Statuses["pitch"] == 0 || pt.FirstDate == nil {
+			pt := findType(site, "post")
+			if pt == nil || pt.Statuses["publish"] == 0 || pt.Statuses["pitch"] == 0 || pt.FirstDate == nil || pt.MetaBytes == 0 {
 				t.Errorf("post type 'post' = %+v", pt)
 			}
-			if findType(inv, "acf-field") == nil || findType(inv, "revision") == nil {
+			if findType(site, "acf-field") == nil || findType(site, "revision") == nil {
 				t.Error("acf-field or revision post type missing")
 			}
 
-			if inv.ACFFields["gallery"] != 1 || inv.ACFFields["post_object"] != 1 {
-				t.Errorf("ACF fields = %v", inv.ACFFields)
+			if site.ACFFields["gallery"] != 1 || site.ACFFields["post_object"] != 1 {
+				t.Errorf("ACF fields = %v", site.ACFFields)
 			}
 
 			tax := map[string]Taxonomy{}
-			for _, tx := range inv.Taxonomies {
+			for _, tx := range site.Taxonomies {
 				tax[tx.Taxonomy] = tx
 			}
 			if c := tax["category"]; c.Terms != 12 || !c.Hierarchical || c.PostTypes["post"] == 0 || len(c.LargestTerms) != 5 {
@@ -98,28 +120,28 @@ func TestInventory(t *testing.T) {
 				t.Errorf("post_tag = %+v", tg)
 			}
 
-			if inv.Options.PostsPerPage == nil || *inv.Options.PostsPerPage != 10 {
-				t.Errorf("posts_per_page = %v", inv.Options.PostsPerPage)
+			if site.Options.PostsPerPage == nil || *site.Options.PostsPerPage != 10 {
+				t.Errorf("posts_per_page = %v", site.Options.PostsPerPage)
 			}
-			if len(inv.Options.Large) != 1 || inv.Options.Large[0].Name != "big_option" {
-				t.Errorf("large options = %v", inv.Options.Large)
+			if len(site.Options.Large) != 1 || site.Options.Large[0].Name != "big_option" {
+				t.Errorf("large options = %v", site.Options.Large)
 			}
-			if inv.Options.TransientCount != 2 {
-				t.Errorf("transients = %d", inv.Options.TransientCount)
+			if site.Options.TransientCount != 2 {
+				t.Errorf("transients = %d", site.Options.TransientCount)
 			}
-			if _, ok := inv.Options.Values["admin_email"]; ok {
+			if _, ok := site.Options.Values["admin_email"]; ok {
 				t.Error("index stored admin_email; option values outside the allow list must not be stored")
 			}
 
-			if inv.Users.Count != 5 || inv.Users.Roles["administrator"] != 1 || inv.Users.Roles["author"] != 4 {
-				t.Errorf("users = %+v", inv.Users)
+			if inv.Users != 5 || site.Roles["administrator"] != 1 || site.Roles["author"] != 4 {
+				t.Errorf("users = %d, roles = %v", inv.Users, site.Roles)
 			}
-			if inv.Comments.Count != int64(stats["wp_comments"]) || inv.Comments.ByStatus["approved"] != inv.Comments.Count {
-				t.Errorf("comments = %+v", inv.Comments)
+			if site.Comments.Count != int64(stats["wp_comments"]) || site.Comments.ByStatus["approved"] != site.Comments.Count {
+				t.Errorf("comments = %+v", site.Comments)
 			}
 
 			content := map[string]RefCount{}
-			for _, rc := range inv.References.Content {
+			for _, rc := range site.References.Content {
 				content[rc.Name] = rc
 			}
 			for _, src := range []string{"block:core/image:id", "class:wp-image"} {
@@ -129,7 +151,7 @@ func TestInventory(t *testing.T) {
 				}
 			}
 			var keys []string
-			for _, rc := range inv.References.MetaKeys {
+			for _, rc := range site.References.MetaKeys {
 				keys = append(keys, rc.Name)
 			}
 			for _, k := range []string{"_thumbnail_id", "gallery", "related_story_id", "_menu_item_object_id"} {
@@ -141,35 +163,50 @@ func TestInventory(t *testing.T) {
 	}
 }
 
-func TestIndexTablesHoldOnlyMainSite(t *testing.T) {
+func TestSiteColumns(t *testing.T) {
 	_, stats, path := buildIndex(t, synth.Options{Seed: 23, Posts: 100, Subsite: true})
 	db, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for _, rt := range rowTables {
+	q := func(query string, args ...any) int {
+		t.Helper()
 		var n int
-		if err := db.QueryRow(`SELECT count(*) FROM `+rt.table+` WHERE tbl <> ?`, "wp_"+rt.suffix).Scan(&n); err != nil {
+		if err := db.QueryRow(query, args...).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
-		if n != 0 {
-			t.Errorf("%s holds %d rows from other prefixes", rt.table, n)
+		return n
+	}
+	for _, st := range siteTables {
+		if n := q(`SELECT count(*) FROM ` + st.table + ` WHERE site IS NULL OR site NOT IN (1, 2)`); n != 0 {
+			t.Errorf("%s has %d rows without a site", st.table, n)
 		}
 	}
-	var bylines int
-	if err := db.QueryRow(`SELECT count(*) FROM object_rows WHERE tbl = 'wp_example_bylines' AND column_name = 'post_id'`).Scan(&bylines); err != nil {
-		t.Fatal(err)
+	if n := q(`SELECT count(*) FROM posts WHERE site = 1`); n != stats["wp_posts"] {
+		t.Errorf("site 1 has %d posts, want %d", n, stats["wp_posts"])
 	}
-	if bylines != stats["wp_example_bylines"] {
-		t.Errorf("object_rows has %d bylines rows, want %d", bylines, stats["wp_example_bylines"])
+	if n := q(`SELECT count(*) FROM posts WHERE site = 2 AND tbl = 'wp_2_posts'`); n != stats["wp_2_posts"] {
+		t.Errorf("site 2 has %d posts, want %d", n, stats["wp_2_posts"])
+	}
+	if n := q(`SELECT count(*) FROM object_rows WHERE tbl = 'wp_example_bylines' AND site = 1 AND column_name = 'post_id'`); n != stats["wp_example_bylines"] {
+		t.Errorf("object_rows has %d bylines rows for site 1, want %d", n, stats["wp_example_bylines"])
+	}
+	for name, want := range map[string]any{"wp_2_posts": 2, "wp_posts": 1, "wp_example_log": 1, "wp_users": nil, "wp_blogs": nil} {
+		var site sql.NullInt64
+		if err := db.QueryRow(`SELECT site FROM tables WHERE name = ?`, name).Scan(&site); err != nil {
+			t.Fatal(err)
+		}
+		if (want == nil) != !site.Valid || (want != nil && int(site.Int64) != want.(int)) {
+			t.Errorf("table %s site = %v, want %v", name, site, want)
+		}
 	}
 }
 
-func findType(inv *Inventory, typ string) *PostType {
-	for i := range inv.PostTypes {
-		if inv.PostTypes[i].Type == typ {
-			return &inv.PostTypes[i]
+func findType(site *Site, typ string) *PostType {
+	for i := range site.PostTypes {
+		if site.PostTypes[i].Type == typ {
+			return &site.PostTypes[i]
 		}
 	}
 	return nil

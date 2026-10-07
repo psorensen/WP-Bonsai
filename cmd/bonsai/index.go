@@ -53,7 +53,7 @@ func indexCmd(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("Indexed %s in %s.\n", mb(d.Size), sum.Duration.Round(time.Second))
-	fmt.Printf("  prefix %q, %d tables, %d rows, multisite: %v\n", sum.Prefix, sum.Tables, sum.Rows, sum.Multisite)
+	fmt.Printf("  prefix %q, %d sites, %d tables, %d rows, multisite: %v\n", sum.Prefix, sum.Sites, sum.Tables, sum.Rows, sum.Multisite)
 	fmt.Printf("  index: %s\n", path)
 	for _, w := range sum.Warnings {
 		fmt.Printf("  warning: %s\n", w)

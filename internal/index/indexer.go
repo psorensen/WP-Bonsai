@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -49,6 +50,7 @@ type Options struct {
 type Summary struct {
 	Prefix    string
 	Multisite bool
+	Sites     int
 	Tables    int
 	Rows      int64
 	Bytes     int64
@@ -70,6 +72,7 @@ var roleColumns = map[string][]string{
 	"comments":           {"comment_ID", "comment_post_ID", "comment_approved", "comment_type", "comment_parent", "user_id", "comment_date"},
 	"commentmeta":        {"meta_id", "comment_id", "meta_key"},
 	"options":            {"option_id", "option_name", "autoload", "option_value"},
+	"blogs":              {"blog_id", "domain", "path", "public", "archived", "deleted", "spam"},
 }
 
 // Maximum meta value size that pass 1 decodes to look for IDs.
@@ -159,19 +162,16 @@ func (ix *indexer) stream(ctx context.Context, connector *duckdb.Connector, r io
 		return 0, err
 	}
 	defer conn.Close()
-	for _, t := range rowTables {
-		a, err := duckdb.NewAppenderFromConn(conn, "", t.table)
-		if err != nil {
-			return 0, fmt.Errorf("index: appender for %s: %w", t.table, err)
-		}
-		ix.app[t.table] = a
+	var names []string
+	for _, t := range append(append(siteTables[:len(siteTables):len(siteTables)], networkTables...), struct{ table, suffix string }{"object_rows", ""}) {
+		names = append(names, t.table)
 	}
-	{
-		a, err := duckdb.NewAppenderFromConn(conn, "", "object_rows")
+	for _, name := range names {
+		a, err := duckdb.NewAppenderFromConn(conn, "", name)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("index: appender for %s: %w", name, err)
 		}
-		ix.app["object_rows"] = a
+		ix.app[name] = a
 	}
 
 	p := sqldump.NewParser(r)
@@ -288,7 +288,10 @@ func (ix *indexer) beginInsert(it *sqldump.Item) {
 		}
 	}
 	ix.objectPos, ix.objectCol = -1, ""
-	if t.suffix == "" {
+	// A table is read as a core table only when it has the core table's ID
+	// column. Plugin tables whose names end like a core table, such as
+	// wp_yoast_seo_links, are read like any other plugin table.
+	if len(ix.pos) == 0 || ix.pos[0] < 0 {
 		for _, c := range []string{"post_id", "object_id"} {
 			if i := find(c); i >= 0 {
 				ix.objectPos, ix.objectCol = i, c
@@ -382,27 +385,30 @@ func (ix *indexer) row(it *sqldump.Item) error {
 	if ix.objectPos >= 0 {
 		f := it.Fields[ix.objectPos]
 		if v, err := f.Uint64(); err == nil {
-			return ix.appendRow("object_rows", t.name, ix.objectCol, int64(v), size)
+			return ix.appendRow("object_rows", t.name, nil, ix.objectCol, int64(v), size)
 		}
 		return nil
 	}
 
+	if len(ix.pos) == 0 || ix.pos[0] < 0 {
+		return nil
+	}
 	switch t.suffix {
 	case "posts":
 		return ix.post(t, size)
 	case "postmeta":
-		if err := ix.appendRow("postmeta", t.name, ix.id(0), ix.id(1), ix.str(2), size); err != nil {
+		if err := ix.appendRow("postmeta", t.name, nil, ix.id(0), ix.id(1), ix.str(2), size); err != nil {
 			return err
 		}
 		return ix.postmetaRefs(t)
 	case "terms":
-		return ix.appendRow("terms", t.name, ix.id(0), ix.str(2), ix.str(1), size)
+		return ix.appendRow("terms", t.name, nil, ix.id(0), ix.str(2), ix.str(1), size)
 	case "term_taxonomy":
-		return ix.appendRow("term_taxonomy", t.name, ix.id(0), ix.id(1), ix.str(2), ix.id(3), ix.id(4), size)
+		return ix.appendRow("term_taxonomy", t.name, nil, ix.id(0), ix.id(1), ix.str(2), ix.id(3), ix.id(4), size)
 	case "term_relationships":
-		return ix.appendRow("term_relationships", t.name, ix.id(0), ix.id(1), size)
+		return ix.appendRow("term_relationships", t.name, nil, ix.id(0), ix.id(1), size)
 	case "termmeta":
-		return ix.appendRow("termmeta", t.name, ix.id(0), ix.id(1), ix.str(2), size)
+		return ix.appendRow("termmeta", t.name, nil, ix.id(0), ix.id(1), ix.str(2), size)
 	case "users":
 		return ix.appendRow("users", t.name, ix.id(0), size)
 	case "usermeta":
@@ -414,16 +420,18 @@ func (ix *indexer) row(it *sqldump.Item) error {
 			return ix.roles(t, ix.id(1), k)
 		}
 	case "comments":
-		return ix.appendRow("comments", t.name, ix.id(0), ix.id(1), ix.str(2), ix.str(3), ix.id(4), ix.id(5), ix.date(6), size)
+		return ix.appendRow("comments", t.name, nil, ix.id(0), ix.id(1), ix.str(2), ix.str(3), ix.id(4), ix.id(5), ix.date(6), size)
 	case "commentmeta":
-		return ix.appendRow("commentmeta", t.name, ix.id(0), ix.id(1), ix.str(2), size)
+		return ix.appendRow("commentmeta", t.name, nil, ix.id(0), ix.id(1), ix.str(2), size)
 	case "options":
 		name := ix.str(1)
 		var value driver.Value
 		if n, ok := name.(string); ok && keptOptionValues[n] {
 			value = ix.str(3)
 		}
-		return ix.appendRow("options", t.name, ix.id(0), name, ix.str(2), size, value)
+		return ix.appendRow("options", t.name, nil, ix.id(0), name, ix.str(2), size, value)
+	case "blogs":
+		return ix.appendRow("blogs", t.name, ix.id(0), ix.str(1), ix.str(2), ix.str(3), ix.str(4), ix.str(5), ix.str(6))
 	}
 	return nil
 }
@@ -431,7 +439,7 @@ func (ix *indexer) row(it *sqldump.Item) error {
 func (ix *indexer) post(t *tableState, size int64) error {
 	id := ix.id(0)
 	typ := ix.str(5)
-	if err := ix.appendRow("posts", t.name, id, typ, ix.str(3), ix.id(1), ix.id(4), ix.date(2), ix.str(6), size); err != nil {
+	if err := ix.appendRow("posts", t.name, nil, id, typ, ix.str(3), ix.id(1), ix.id(4), ix.date(2), ix.str(6), size); err != nil {
 		return err
 	}
 	if id == nil {
@@ -456,7 +464,7 @@ func (ix *indexer) post(t *tableState, size int64) error {
 	}
 	ix.crefs = contentRefs(content, ix.crefs[:0])
 	for _, r := range ix.crefs {
-		if err := ix.appendRow("content_refs", t.name, id, r.id, r.source); err != nil {
+		if err := ix.appendRow("content_refs", t.name, nil, id, r.id, r.source); err != nil {
 			return err
 		}
 	}
@@ -476,7 +484,7 @@ func (ix *indexer) acfField(t *tableState, id driver.Value) error {
 			}
 		}
 	}
-	return ix.appendRow("acf_fields", t.name, id, key, name, typ, parent)
+	return ix.appendRow("acf_fields", t.name, nil, id, key, name, typ, parent)
 }
 
 func (ix *indexer) postmetaRefs(t *tableState) error {
@@ -509,7 +517,7 @@ func (ix *indexer) postmetaRefs(t *tableState) error {
 	}
 	metaID, postID, key := ix.id(0), ix.id(1), ix.str(2)
 	for _, ref := range ix.refs {
-		if err := ix.appendRow("meta_refs", t.name, metaID, postID, key, ref); err != nil {
+		if err := ix.appendRow("meta_refs", t.name, nil, metaID, postID, key, ref); err != nil {
 			return err
 		}
 	}
@@ -529,7 +537,7 @@ func (ix *indexer) roles(t *tableState, userID driver.Value, key string) error {
 	}
 	for _, e := range pv.Entries {
 		if e.Key.Kind == phpser.String && (e.Val.Kind != phpser.Bool || e.Val.Int == 1) {
-			if err := ix.appendRow("user_roles", t.name, userID, key, string(e.Key.Str)); err != nil {
+			if err := ix.appendRow("user_roles", t.name, nil, userID, key, string(e.Key.Str)); err != nil {
 				return err
 			}
 		}
@@ -539,70 +547,168 @@ func (ix *indexer) roles(t *tableState, userID driver.Value, key string) error {
 
 // --- after the stream ---
 
-var subsitePrefix = regexp.MustCompile(`^(.*?)(\d+)_$`)
+// sitePrefixRe matches a subsite prefix such as wp_12_ and captures the main
+// prefix and the blog ID.
+var sitePrefixRe = regexp.MustCompile(`^(.*?)(\d+)_$`)
 
-// finish picks the main table prefix, drops rows from other prefixes, and
-// writes the tables and info rows.
+// finish works out which tables belong to which site, fills in the site
+// column, drops rows from prefixes that are not part of this install, and
+// writes the sites, tables, and info rows.
 func (ix *indexer) finish(ctx context.Context, db *sql.DB, src Source, sum *Summary) error {
-	// A prefix is a candidate when it has both a posts and an options table.
-	type cand struct {
-		prefix string
-		posts  int64
-	}
-	var cands []cand
+	// A prefix is a candidate site when it has both a posts and an options table.
+	posts := map[string]int64{}
 	for _, t := range ix.tabs {
-		if t.suffix != "posts" {
-			continue
-		}
-		if _, ok := ix.tabs[t.prefix+"options"]; ok {
-			cands = append(cands, cand{t.prefix, t.rows})
+		if t.suffix == "posts" {
+			if _, ok := ix.tabs[t.prefix+"options"]; ok {
+				posts[t.prefix] = t.rows
+			}
 		}
 	}
-	if len(cands) == 0 {
+	if len(posts) == 0 {
 		return errors.New("index: no WordPress tables found: the dump has no pair of posts and options tables with the same prefix")
 	}
-	isSubsite := func(p string) bool {
-		m := subsitePrefix.FindStringSubmatch(p)
+	// The main prefix is a candidate that is not a subsite of another
+	// candidate. With several, the one with the most posts wins.
+	subsiteOf := func(p string) (string, int, bool) {
+		m := sitePrefixRe.FindStringSubmatch(p)
 		if m == nil {
-			return false
+			return "", 0, false
 		}
-		_, ok := ix.tabs[m[1]+"posts"]
-		return ok
+		if _, ok := posts[m[1]]; !ok {
+			return "", 0, false
+		}
+		n, err := strconv.Atoi(m[2])
+		return m[1], n, err == nil && n > 1
 	}
-	slices.SortFunc(cands, func(a, b cand) int {
-		if sa, sb := isSubsite(a.prefix), isSubsite(b.prefix); sa != sb {
-			if sa {
-				return 1
-			}
-			return -1
+	var mains []string
+	for p := range posts {
+		if _, _, ok := subsiteOf(p); !ok {
+			mains = append(mains, p)
 		}
-		if a.posts != b.posts {
-			if a.posts > b.posts {
+	}
+	slices.SortFunc(mains, func(a, b string) int {
+		if posts[a] != posts[b] {
+			if posts[a] > posts[b] {
 				return -1
 			}
 			return 1
 		}
-		return strings.Compare(a.prefix, b.prefix)
+		return strings.Compare(a, b)
 	})
-	prefix := cands[0].prefix
+	if len(mains) == 0 {
+		return errors.New("index: could not tell the main table prefix from the subsite prefixes")
+	}
+	prefix := mains[0]
 	sum.Prefix = prefix
+	for _, other := range mains[1:] {
+		ix.warnf("tables with prefix %q also look like WordPress; only prefix %q is indexed", other, prefix)
+	}
 
-	subsites := 0
-	for _, c := range cands[1:] {
-		if isSubsite(c.prefix) {
-			subsites++
-		} else {
-			ix.warnf("tables with prefix %q also look like WordPress; only prefix %q is indexed", c.prefix, prefix)
+	// Blog ID per site prefix.
+	siteOf := map[string]int{prefix: 1}
+	for p := range posts {
+		if main, n, ok := subsiteOf(p); ok && main == prefix {
+			siteOf[p] = n
 		}
 	}
 	_, hasBlogs := ix.tabs[prefix+"blogs"]
-	sum.Multisite = subsites > 0 || hasBlogs
-	if sum.Multisite {
-		ix.warnf("multisite detected (%d subsite table sets); only the main site, prefix %q, is indexed", subsites, prefix)
+	sum.Multisite = len(siteOf) > 1 || hasBlogs
+	sum.Sites = len(siteOf)
+
+	// Site and role of every table. A plugin table belongs to the site whose
+	// prefix it starts with, the longest prefix first.
+	sitePrefixes := slices.Collect(maps.Keys(siteOf))
+	slices.SortFunc(sitePrefixes, func(a, b string) int { return len(b) - len(a) })
+	type placed struct {
+		site sql.NullInt64
+		role string
+	}
+	place := map[string]placed{}
+	for name, t := range ix.tabs {
+		var pl placed
+		if n, ok := siteOf[t.prefix]; ok && slices.Contains(siteSuffixes, t.suffix) {
+			pl = placed{sql.NullInt64{Int64: int64(n), Valid: true}, t.suffix}
+		} else if t.prefix == prefix && slices.Contains(networkSuffixes, t.suffix) {
+			pl = placed{role: t.suffix}
+		} else {
+			for _, p := range sitePrefixes {
+				if strings.HasPrefix(name, p) {
+					pl.site = sql.NullInt64{Int64: int64(siteOf[p]), Valid: true}
+					break
+				}
+			}
+		}
+		place[name] = pl
 	}
 
-	for _, t := range rowTables {
-		if _, err := db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tbl <> ?`, t.table), prefix+t.suffix); err != nil {
+	exec := func(q string, args ...any) error {
+		if _, err := db.ExecContext(ctx, q, args...); err != nil {
+			return fmt.Errorf("index: %w\nquery: %s", err, q)
+		}
+		return nil
+	}
+	if err := exec(`CREATE TEMP TABLE core_map (tbl VARCHAR, site INTEGER)`); err != nil {
+		return err
+	}
+	if err := exec(`CREATE TEMP TABLE any_map (tbl VARCHAR, site INTEGER)`); err != nil {
+		return err
+	}
+	for name, pl := range place {
+		if !pl.site.Valid {
+			continue
+		}
+		if pl.role != "" {
+			if err := exec(`INSERT INTO core_map VALUES (?, ?)`, name, pl.site.Int64); err != nil {
+				return err
+			}
+		}
+		if err := exec(`INSERT INTO any_map VALUES (?, ?)`, name, pl.site.Int64); err != nil {
+			return err
+		}
+	}
+	for _, t := range siteTables {
+		if err := exec(fmt.Sprintf(`UPDATE %[1]s SET site = m.site FROM core_map m
+			WHERE %[1]s.tbl = m.tbl AND m.tbl LIKE '%%' || ?`, t.table), t.suffix); err != nil {
+			return err
+		}
+		if err := exec(fmt.Sprintf(`DELETE FROM %s WHERE site IS NULL`, t.table)); err != nil {
+			return err
+		}
+	}
+	if err := exec(`UPDATE object_rows SET site = m.site FROM any_map m WHERE object_rows.tbl = m.tbl`); err != nil {
+		return err
+	}
+	for _, t := range networkTables {
+		if err := exec(fmt.Sprintf(`DELETE FROM %s WHERE tbl <> ?`, t.table), prefix+t.suffix); err != nil {
+			return err
+		}
+	}
+	// Roles apply to the site named by the capabilities key: wp_capabilities
+	// for blog 1, wp_2_capabilities for blog 2.
+	if err := exec(`CREATE TEMP TABLE cap_map (meta_key VARCHAR, site INTEGER)`); err != nil {
+		return err
+	}
+	for p, n := range siteOf {
+		if err := exec(`INSERT INTO cap_map VALUES (?, ?)`, p+"capabilities", n); err != nil {
+			return err
+		}
+	}
+	if err := exec(`UPDATE user_roles SET site = m.site FROM cap_map m WHERE user_roles.meta_key = m.meta_key`); err != nil {
+		return err
+	}
+	if err := exec(`DELETE FROM user_roles WHERE site IS NULL`); err != nil {
+		return err
+	}
+
+	// Sites: every row of wp_blogs, plus any site with tables but no row.
+	if err := exec(`INSERT INTO sites
+		SELECT blog_id, CASE WHEN blog_id = 1 THEN ? ELSE ? || blog_id || '_' END,
+			domain, path, public = '1', archived = '1', deleted = '1', spam = '1'
+		FROM blogs WHERE blog_id IS NOT NULL`, prefix, prefix); err != nil {
+		return err
+	}
+	for p, n := range siteOf {
+		if err := exec(`INSERT INTO sites (blog_id, prefix) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM sites WHERE blog_id = ?)`, n, p, n); err != nil {
 			return err
 		}
 	}
@@ -613,19 +719,15 @@ func (ix *indexer) finish(ctx context.Context, db *sql.DB, src Source, sum *Summ
 	}
 	slices.SortFunc(names, func(a, b string) int { return ix.tabs[a].ord - ix.tabs[b].ord })
 	for _, name := range names {
-		t := ix.tabs[name]
-		role := ""
-		if t.suffix != "" && t.prefix == prefix {
-			role = t.suffix
-		}
+		t, pl := ix.tabs[name], place[name]
 		cols := make([]string, len(t.cols))
 		for i, c := range t.cols {
 			cols[i] = c.Name
 		}
 		colsJSON, _ := json.Marshal(cols)
-		if _, err := db.ExecContext(ctx, `INSERT INTO tables VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			name, role, t.ord, string(colsJSON), t.createSQL, t.rows, t.rowBytes, t.otherBytes); err != nil {
-			return fmt.Errorf("index: write table %s: %w", name, err)
+		if err := exec(`INSERT INTO tables VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			name, pl.site, pl.role, t.ord, string(colsJSON), t.createSQL, t.rows, t.rowBytes, t.otherBytes); err != nil {
+			return err
 		}
 		sum.Rows += t.rows
 		if t.badRows > 0 {
@@ -648,7 +750,7 @@ func (ix *indexer) finish(ctx context.Context, db *sql.DB, src Source, sum *Summ
 		"warnings":       string(warnings),
 	}
 	for k, v := range info {
-		if _, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO info VALUES (?, ?)`, k, v); err != nil {
+		if err := exec(`INSERT OR REPLACE INTO info VALUES (?, ?)`, k, v); err != nil {
 			return err
 		}
 	}

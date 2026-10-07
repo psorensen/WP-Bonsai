@@ -367,6 +367,7 @@ func (g *gen) build() {
 				fmt.Sprintf("sub-%d", id), "", "", d, d, "", 0, "", 0, "post", "", 0)
 			g.add(subMeta, id, id, "_edit_lock", "1:1")
 		}
+		g.add(usermeta, len(usermeta.rows)+1, 2, sub+"capabilities", `a:1:{s:6:"editor";b:1;}`)
 		g.add(subOptions, 1, "siteurl", "https://example-newspaper.test/sports", "yes")
 		g.add(subOptions, 2, "posts_per_page", "5", "yes")
 	}
