@@ -46,15 +46,32 @@ Bonsai reads the dump twice and never loads it into a database server until the 
 
 Because both passes stream, memory use stays flat no matter how large the dump is.
 
-## Requirements
+## Install
 
-You need Go 1.27 or later to build Bonsai, and Docker to run the finish step. The first build of the sandbox image downloads WordPress and the scrubber, so that one step needs an internet connection.
+Bonsai needs Node.js 18 or later and Docker. It runs on macOS (Apple silicon and Intel) and on Linux (x64 and arm64) with glibc 2.34 or later.
+
+```sh
+npm install -g wp-bonsai
+bonsai setup
+```
+
+`bonsai setup` checks that Docker is running and prepares the sandbox image. It downloads WordPress and the scrubber the first time, so that one step needs an internet connection. After that, Bonsai works offline.
 
 ## Quick start
 
-```sh
-go build -o bonsai ./cmd/bonsai
+Run Bonsai on a dump and answer a few questions:
 
+```sh
+bonsai prod.sql.gz
+```
+
+Bonsai indexes the dump and asks which sites to keep, a target size, and how many posts to keep of each post type. Every question has a default that suits the dump, so pressing Enter all the way through works. Bonsai then shows the size estimate, saves your answers as `bonsai.yml`, and builds `prod-bonsai.sql` in the current folder. The next time you run Bonsai in that folder, it offers to reuse `bonsai.yml`.
+
+## Step by step
+
+Each stage also has its own command, which suits scripts and CI:
+
+```sh
 # Index the dump. Bonsai reads .sql and .sql.gz files.
 bonsai index production.sql.gz -out work/
 
@@ -150,10 +167,13 @@ A few known limits:
 
 ## Development
 
+You need Go 1.27 or later to build Bonsai from source.
+
 ```sh
+go build -o bonsai ./cmd/bonsai
 go test ./...                     # unit tests
 BONSAI_MARIADB=1 go test ./...    # adds the Docker tests: MariaDB round trips and the sandbox
 go run ./cmd/synthdump -posts 5000 -subsite -o synthetic.sql   # generate a synthetic test dump
 ```
 
-The design is in [SPEC.md](SPEC.md), and the working rules for contributors are in [CLAUDE.md](CLAUDE.md).
+The design is in [SPEC.md](SPEC.md), and the working rules for contributors are in [CLAUDE.md](CLAUDE.md). Releases are described in [docs/releasing.md](docs/releasing.md).

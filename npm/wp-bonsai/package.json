@@ -1,0 +1,18 @@
+{
+  "name": "wp-bonsai",
+  "version": "0.0.0",
+  "description": "Shrink a production WordPress database into a small, scrubbed copy that still looks like production.",
+  "keywords": ["wordpress", "database", "mysql", "dump", "scrub", "multisite", "local-development"],
+  "homepage": "https://github.com/psorensen/WP-Bonsai#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/psorensen/WP-Bonsai.git" },
+  "license": "UNLICENSED",
+  "bin": { "bonsai": "bin/bonsai.js" },
+  "files": ["bin/bonsai.js", "README.md"],
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {
+    "wp-bonsai-darwin-arm64": "0.0.0",
+    "wp-bonsai-darwin-x64": "0.0.0",
+    "wp-bonsai-linux-x64": "0.0.0",
+    "wp-bonsai-linux-arm64": "0.0.0"
+  }
+}

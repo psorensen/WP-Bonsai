@@ -31,3 +31,9 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# npm packages built by scripts/build-npm.sh
+dist/
+
+# Local work directory of interactive mode
+.bonsai-work/

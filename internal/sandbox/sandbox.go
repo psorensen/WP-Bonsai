@@ -105,6 +105,15 @@ func Start(ctx context.Context, log func(string)) (*Sandbox, error) {
 	return s, nil
 }
 
+// EnsureImage builds the sandbox image unless it already exists. It is the
+// only step that needs the internet.
+func EnsureImage(ctx context.Context, log func(string)) error {
+	if log == nil {
+		log = func(string) {}
+	}
+	return ensureImage(ctx, log)
+}
+
 func ensureImage(ctx context.Context, log func(string)) error {
 	if docker(ctx, nil, nil, "image", "inspect", Image()) == nil {
 		return nil
@@ -202,4 +211,12 @@ func lastLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// CheckDocker reports an error when Docker is not running.
+func CheckDocker(ctx context.Context) error {
+	if err := docker(ctx, nil, nil, "version", "--format", "{{.Server.Version}}"); err != nil {
+		return fmt.Errorf("Docker is not running: %w", err)
+	}
+	return nil
 }

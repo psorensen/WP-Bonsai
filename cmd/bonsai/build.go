@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/psorensen/WP-Bonsai/internal/config"
 	"github.com/psorensen/WP-Bonsai/internal/finish"
 	"github.com/psorensen/WP-Bonsai/internal/index"
 	"github.com/psorensen/WP-Bonsai/internal/plan"
@@ -28,31 +29,50 @@ func buildCmd(ctx context.Context, args []string) error {
 	if fs.NArg() != 1 {
 		return errors.New("build needs one dump file")
 	}
-	dumpPath := fs.Arg(0)
-	start := time.Now()
-
 	cfg, cfgName, err := loadConfig(*cfgPath)
 	if err != nil {
 		return err
 	}
+	return runBuild(ctx, buildRun{dump: fs.Arg(0), cfg: cfg, cfgName: cfgName, work: *work, out: *out, keepWork: *keepWork})
+}
 
-	// Pass 1, unless the work directory already holds an index of this dump.
-	if err := os.MkdirAll(*work, 0o700); err != nil {
-		return err
+// buildRun is one full build: pass 1 if needed, plan, pass 2, and the
+// sandbox finish.
+type buildRun struct {
+	dump     string
+	cfg      *config.Config
+	cfgName  string
+	work     string
+	out      string
+	keepWork bool
+}
+
+// ensureIndex runs pass 1 unless the work directory already holds an index
+// of this dump, and returns the index path.
+func ensureIndex(ctx context.Context, dumpPath, work string) (string, error) {
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		return "", err
 	}
-	indexPath := filepath.Join(*work, index.FileName)
+	indexPath := filepath.Join(work, index.FileName)
 	fresh, err := indexMatches(indexPath, dumpPath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if fresh {
 		fmt.Printf("Pass 1: reusing %s\n", indexPath)
-	} else {
-		if err := runPass1(ctx, dumpPath, indexPath); err != nil {
-			return err
-		}
+		return indexPath, nil
 	}
-	if !*keepWork {
+	return indexPath, runPass1(ctx, dumpPath, indexPath)
+}
+
+func runBuild(ctx context.Context, r buildRun) error {
+	start := time.Now()
+	dumpPath, cfg, cfgName, work, out := r.dump, r.cfg, r.cfgName, &r.work, &r.out
+	indexPath, err := ensureIndex(ctx, dumpPath, *work)
+	if err != nil {
+		return err
+	}
+	if !r.keepWork {
 		defer func() {
 			os.Remove(indexPath)
 			os.Remove(indexPath + ".wal")

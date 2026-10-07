@@ -9,9 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+
+	"github.com/psorensen/WP-Bonsai/internal/sandbox"
 )
 
 const usage = `Usage:
+  bonsai           <dump>   interactive: asks a few questions, then builds
+  bonsai setup              check Docker and prepare the sandbox image
+  bonsai version
   bonsai index     <dump> [-out work/]
   bonsai inspect   [work/]
   bonsai plan      [work/] [-config bonsai.yml] [-json] [-all]
@@ -42,6 +47,14 @@ func main() {
 	defer stop()
 
 	var err error
+	if isDumpFile(os.Args[1]) {
+		err = wizardCmd(ctx, os.Args[1])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "bonsai:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	switch os.Args[1] {
 	case "index":
 		err = indexCmd(ctx, os.Args[2:])
@@ -53,6 +66,14 @@ func main() {
 		err = planCmd(ctx, os.Args[2:])
 	case "roundtrip":
 		err = roundtrip(os.Args[2:])
+	case "setup":
+		err = setupSandbox(ctx)
+		if err == nil {
+			fmt.Println("Ready. Run: bonsai <dump file>")
+		}
+	case "version", "-v", "--version":
+		fmt.Println("bonsai", version)
+		return
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
@@ -92,4 +113,28 @@ func reorder(fs *flag.FlagSet, args []string) []string {
 		}
 	}
 	return append(flags, pos...)
+}
+
+// isDumpFile reports whether an argument names a dump file rather than a
+// command, so "bonsai prod.sql" starts interactive mode.
+func isDumpFile(arg string) bool {
+	if strings.HasPrefix(arg, "-") {
+		return false
+	}
+	if strings.HasSuffix(arg, ".sql") || strings.HasSuffix(arg, ".sql.gz") || strings.HasSuffix(arg, ".gz") {
+		return true
+	}
+	st, err := os.Stat(arg)
+	return err == nil && !st.IsDir()
+}
+
+// version is set at release time with -ldflags "-X main.version=1.2.3".
+var version = "dev"
+
+// setupSandbox checks Docker and builds the sandbox image if needed.
+func setupSandbox(ctx context.Context) error {
+	if err := sandbox.CheckDocker(ctx); err != nil {
+		return fmt.Errorf("%w\nBonsai runs its scrub step in Docker. Start Docker Desktop and try again", err)
+	}
+	return sandbox.EnsureImage(ctx, func(m string) { fmt.Println("Setup:", m) })
 }

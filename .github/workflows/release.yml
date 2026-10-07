@@ -1,0 +1,82 @@
+# Publishes the npm packages when a version tag such as v0.2.0 is pushed.
+# Needs the repository secret NPM_TOKEN: an npm automation token with
+# publish rights on wp-bonsai and the four wp-bonsai-<platform> packages.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  build:
+    name: Build ${{ matrix.platforms }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # macOS builds both architectures; clang targets each one.
+          - runner: macos-14
+            platforms: darwin-arm64 darwin-x64
+          # Ubuntu 22.04 links against an older glibc, so the binary also
+          # runs on older distributions.
+          - runner: ubuntu-22.04
+            platforms: linux-x64
+          - runner: ubuntu-22.04-arm
+            platforms: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go vet ./... && go test ./...
+      - name: Build packages
+        run: scripts/build-npm.sh "${GITHUB_REF_NAME#v}" ${{ matrix.platforms }}
+      - name: Smoke test
+        run: |
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64) dist/npm/wp-bonsai-darwin-arm64/bin/bonsai version ;;
+            Linux-x86_64) dist/npm/wp-bonsai-linux-x64/bin/bonsai version ;;
+            Linux-aarch64) dist/npm/wp-bonsai-linux-arm64/bin/bonsai version ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.runner }}
+          path: dist/npm
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: npm-*
+          path: dist/npm
+          merge-multiple: true
+      - name: Restore executable bits
+        # Artifacts do not keep file modes.
+        run: chmod 755 dist/npm/wp-bonsai-*/bin/bonsai
+      - name: Build the main package
+        run: scripts/build-npm.sh "${GITHUB_REF_NAME#v}" main
+      - name: Publish
+        # Platform packages first, so the main package never points at a
+        # version that does not exist yet.
+        run: |
+          for dir in dist/npm/wp-bonsai-*/; do
+            (cd "$dir" && npm publish --provenance --access public)
+          done
+          (cd dist/npm/wp-bonsai && npm publish --provenance --access public)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
