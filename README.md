@@ -10,7 +10,7 @@ Most of a large WordPress database is content you never open while developing. T
 
 What you need locally is much smaller: the home page, the navigation, the archive pages, recent content, and the settings that hold the site together. Bonsai keeps exactly that.
 
-It starts from the home page, the menus, and the most recent posts of each type. Then it follows everything those posts depend on: featured images, images and files in the content, parent pages, related posts, and ACF fields. It keeps every category and tag, and it gives each archive enough posts to show a second page. Templates, global styles, reusable blocks, and ACF field definitions always come along.
+It starts from the home page, the menus, and the most recent posts of each type. Then it follows everything those posts depend on: featured images, images and files in the content, parent pages, related posts, and ACF fields. It keeps every category and tag, so every archive URL still works. The most-used categories, and the ones your menus link to, also get enough posts to show a second page. Templates, global styles, reusable blocks, and ACF field definitions always come along.
 
 The result is a site that matches production wherever developers look, without the long tail of posts that nothing on the site links to. Bonsai never trims the posts it keeps. All of their post meta comes along unchanged, so any template that works in production works locally too.
 
@@ -21,6 +21,7 @@ The result is a site that matches production wherever developers look, without t
 - Comments
 - Indexes that plugins can rebuild, such as Yoast indexables and WooCommerce lookup tables
 - Logs, queues, and caches from plugins such as Action Scheduler, Stream, Redirection, and Wordfence
+- Transients and Jetpack Sync's queue, which plugins keep in the options table
 - Personal data tables, such as orders, form entries, and newsletter lists
 - Sites of a network that you choose to exclude, and tables left over from deleted sites
 
@@ -42,27 +43,31 @@ Bonsai reads the dump twice and never loads it into a database server until the 
 1. **Index.** The first pass streams the dump and builds a small DuckDB index of IDs, post types, dates, sizes, and the references between posts. The index holds no post content and no personal data.
 2. **Plan.** Bonsai applies your config to the index with SQL. It decides which rows to keep and estimates the size of the output, table by table, before writing anything.
 3. **Write.** The second pass streams the dump again and writes only the rows in the plan.
-4. **Finish.** Bonsai imports the result into a throwaway MariaDB and WP-CLI setup in Docker, with no internet access. There it scrubs personal data, adds a local admin login, recounts terms, and checks the result before exporting the final file.
+4. **Finish.** Bonsai imports the result into a throwaway MariaDB and WP-CLI setup in Docker, with no internet access. There it scrubs personal data, rewrites production URLs to your local ones, adds a local admin login, recounts terms, and checks the result before exporting the final file.
 
 Because both passes stream, memory use stays flat no matter how large the dump is.
 
 ## Install
 
-Bonsai needs Node.js 18 or later and Docker. It runs on macOS (Apple silicon and Intel) and on Linux (x64 and arm64) with glibc 2.34 or later.
+Bonsai needs Docker and Node.js 18 or later. It runs on macOS (Apple silicon and Intel) and on Linux (x64 and arm64) with glibc 2.34 or later.
+
+Bonsai is not on npm yet. Until the first release, install it from a clone of this repository. That also needs Go 1.27 or later and a C compiler (the Xcode Command Line Tools on macOS):
+
+```sh
+git clone https://github.com/psorensen/WP-Bonsai.git
+cd WP-Bonsai
+scripts/install-local.sh
+bonsai setup
+```
+
+The script builds Bonsai for your machine and installs it with npm, the same way a release installs. To update, pull and run the script again. To remove it, run `npm uninstall -g wp-bonsai` and the platform package the script names.
+
+After the first release, installing takes one command:
 
 ```sh
 npm install -g wp-bonsai
 bonsai setup
 ```
-
-To install from a clone of this repository instead, before a version is on npm or to try unreleased changes, you also need Go 1.27 or later and a C compiler (the Xcode Command Line Tools on macOS):
-
-```sh
-scripts/install-local.sh
-bonsai setup
-```
-
-The script builds Bonsai for your machine and installs it with npm, the same way a release installs. To remove it, run `npm uninstall -g wp-bonsai` and the platform package the script names.
 
 `bonsai setup` checks that Docker is running and prepares the sandbox image. It downloads WordPress and the scrubber the first time, so that one step needs an internet connection. After that, Bonsai works offline.
 
@@ -74,7 +79,15 @@ Run Bonsai on a dump and answer a few questions:
 bonsai prod.sql.gz
 ```
 
-Bonsai indexes the dump and asks which sites to keep, a target size, the local URL of your environment, and how many posts to keep of each post type. Every question has a default that suits the dump, so pressing Enter all the way through works. Bonsai then shows the size estimate, saves your answers as `bonsai.yml`, and builds `prod-bonsai.sql` in the current folder. The next time you run Bonsai in that folder, it offers to reuse `bonsai.yml`.
+Bonsai indexes the dump and asks a few questions:
+
+- which sites of a network to keep
+- a target size
+- the local URL of your environment, such as `https://example-newspaper.local`, and on a network, each site's local address
+- how many posts to keep of each post type
+- for posts, how many categories get a full archive, and whether the categories your menus link to get one too
+
+Every question has a default that suits the dump, so pressing Enter all the way through works. If the estimate comes out over the target, Bonsai lists the biggest tables and offers to change the numbers. Bonsai then shows the size estimate, saves your answers as `bonsai.yml`, and builds `prod-bonsai.sql` in the current folder. The next time you run Bonsai in that folder, it offers to reuse `bonsai.yml`.
 
 ## Step by step
 
@@ -94,7 +107,7 @@ bonsai plan work/ -config bonsai.yml
 bonsai build production.sql.gz -config bonsai.yml -work work/ -out slim.sql
 ```
 
-`build` writes `slim.sql` along with a validation report, `slim.report.json`. After you import the file, log in as `bonsai` with the password `bonsai`.
+`build` writes `slim.sql` along with a validation report, `slim.report.json`. After you import the file, log in as `bonsai` with the password `bonsai`. `bonsai version` prints the installed version.
 
 By default, `build` deletes the index when it finishes. Add `-keep-work` if you want to keep it for more `plan` runs.
 
@@ -157,7 +170,7 @@ Each post type uses one of four modes:
 
 In `per_term` mode, each listed taxonomy picks which terms get their own posts. `max_terms` takes the most-used terms, and `include_menu_terms` adds the terms the site's menus link to. Keep `max_terms` small on large sites: the posts multiply with every term. Terms outside the pick still keep their archive pages, with whatever kept posts they have.
 
-A post type that isn't in the config keeps its 10 newest published posts.
+A post type that isn't in the config keeps its 10 newest published posts. `bonsai plan` lists those types, so you can decide whether the default is right.
 
 ### Local URLs
 
@@ -165,7 +178,7 @@ With `local.url` set, the sandbox rewrites every production URL in the database 
 
 On a network, the main site gets `local.url`. A subsite with its own path keeps that path, so `www.example-newspaper.com/elections/` becomes `https://example-newspaper.local/elections`. A subsite on its own domain gets a folder named after that domain, so `www.example-sports.com` becomes `https://example-newspaper.local/example-sports`. Set any address yourself under `local.sites`.
 
-Your local `wp-config.php` must match: for a subdirectory network, `SUBDOMAIN_INSTALL` is `false`, and `DOMAIN_CURRENT_SITE` is the host of `local.url`. `bonsai plan` lists those types, so you can decide whether the default is right.
+Your local `wp-config.php` must match: for a subdirectory network, `SUBDOMAIN_INSTALL` is `false`, and `DOMAIN_CURRENT_SITE` is the host of `local.url`.
 
 ## Safety
 
@@ -175,13 +188,17 @@ To scrub personal data, the finish step runs 10up WP Scrubber (`wp scrub all`), 
 
 Before writing anything, Bonsai validates the result. It checks every email and IP address column in every table, as well as the references between posts, menus, and terms. If the scrubber fails or any check fails, Bonsai writes no output at all.
 
+The validation report holds counts only, never values from the dump, so it is safe to share. Error messages from the sandbox are redacted too: data values and email addresses are removed before they reach the terminal or the report.
+
 WP Scrubber is GPL-licensed, so it runs only inside the sandbox image, called through WP-CLI. None of its code is part of Bonsai.
 
 ## After importing
 
-The report lists any commands that rebuild tables Bonsai emptied. Run them with the project's plugins active, for example:
+Import the file into your local site, then run any commands the report lists. They rebuild tables Bonsai emptied, so run them with the project's plugins active. For example:
 
 ```sh
+wp db import prod-bonsai.sql
+wp cache flush
 wp yoast index
 ```
 
@@ -196,10 +213,11 @@ A few known limits:
 - Bonsai reads `mysqldump`-style `.sql` and `.sql.gz` files. It doesn't support `.sql.zst`, `.zip`, or mydumper exports yet.
 - WPML's `icl_translations` table is kept whole rather than filtered.
 - Gzip decompression runs on a single core, so pass 1 is faster on a dump you decompress first.
+- Bonsai reads post types from the database, including ones left behind by plugins the site no longer uses. It cannot see which types the site registers, because the sandbox does not load the project's theme or plugins. Set unused types to `mode: none` in the config.
 
 ## Development
 
-You need Go 1.27 or later to build Bonsai from source.
+You need Go 1.27 or later and a C compiler to build Bonsai from source.
 
 ```sh
 go build -o bonsai ./cmd/bonsai
@@ -208,7 +226,7 @@ BONSAI_MARIADB=1 go test ./...    # adds the Docker tests: MariaDB round trips a
 go run ./cmd/synthdump -posts 5000 -subsite -o synthetic.sql   # generate a synthetic test dump
 ```
 
-The design is in [SPEC.md](SPEC.md), and the working rules for contributors are in [CLAUDE.md](CLAUDE.md). Releases are described in [docs/releasing.md](docs/releasing.md).
+The design is in [SPEC.md](SPEC.md), and the working rules for contributors are in [CLAUDE.md](CLAUDE.md). Releases are described in [docs/releasing.md](docs/releasing.md), and measured runs in [docs/benchmarks.md](docs/benchmarks.md).
 
 ## License
 
