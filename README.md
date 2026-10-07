@@ -55,6 +55,15 @@ npm install -g wp-bonsai
 bonsai setup
 ```
 
+To install from a clone of this repository instead, before a version is on npm or to try unreleased changes, you also need Go 1.27 or later and a C compiler (the Xcode Command Line Tools on macOS):
+
+```sh
+scripts/install-local.sh
+bonsai setup
+```
+
+The script builds Bonsai for your machine and installs it with npm, the same way a release installs. To remove it, run `npm uninstall -g wp-bonsai` and the platform package the script names.
+
 `bonsai setup` checks that Docker is running and prepares the sandbox image. It downloads WordPress and the scrubber the first time, so that one step needs an internet connection. After that, Bonsai works offline.
 
 ## Quick start
