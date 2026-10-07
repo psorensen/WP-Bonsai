@@ -74,7 +74,7 @@ Run Bonsai on a dump and answer a few questions:
 bonsai prod.sql.gz
 ```
 
-Bonsai indexes the dump and asks which sites to keep, a target size, and how many posts to keep of each post type. Every question has a default that suits the dump, so pressing Enter all the way through works. Bonsai then shows the size estimate, saves your answers as `bonsai.yml`, and builds `prod-bonsai.sql` in the current folder. The next time you run Bonsai in that folder, it offers to reuse `bonsai.yml`.
+Bonsai indexes the dump and asks which sites to keep, a target size, the local URL of your environment, and how many posts to keep of each post type. Every question has a default that suits the dump, so pressing Enter all the way through works. Bonsai then shows the size estimate, saves your answers as `bonsai.yml`, and builds `prod-bonsai.sql` in the current folder. The next time you run Bonsai in that folder, it offers to reuse `bonsai.yml`.
 
 ## Step by step
 
@@ -133,6 +133,13 @@ tables:
   wp_custom_paywall_log: empty
   wp_custom_bylines: { filter_by: post_id }
 
+local:
+  # Production URLs become local ones, so the dump works in your local
+  # environment. Leave this out to keep production URLs.
+  url: https://example-newspaper.local
+  sites:                    # multisite only; optional
+    "3": https://example-newspaper.local/elections
+
 sites:                      # multisite only
   "*": { exclude: true }    # drop every site not listed below
   "1": { exclude: false }
@@ -150,7 +157,15 @@ Each post type uses one of four modes:
 
 In `per_term` mode, each listed taxonomy picks which terms get their own posts. `max_terms` takes the most-used terms, and `include_menu_terms` adds the terms the site's menus link to. Keep `max_terms` small on large sites: the posts multiply with every term. Terms outside the pick still keep their archive pages, with whatever kept posts they have.
 
-A post type that isn't in the config keeps its 10 newest published posts. `bonsai plan` lists those types, so you can decide whether the default is right.
+A post type that isn't in the config keeps its 10 newest published posts.
+
+### Local URLs
+
+With `local.url` set, the sandbox rewrites every production URL in the database to its local address, with WP-CLI `search-replace`, so serialized values stay valid. It also updates `wp_site`, `wp_blogs`, and `subdomain_install` on a network. `guid` columns keep their production values, as WordPress recommends.
+
+On a network, the main site gets `local.url`. A subsite with its own path keeps that path, so `www.example-newspaper.com/elections/` becomes `https://example-newspaper.local/elections`. A subsite on its own domain gets a folder named after that domain, so `www.example-sports.com` becomes `https://example-newspaper.local/example-sports`. Set any address yourself under `local.sites`.
+
+Your local `wp-config.php` must match: for a subdirectory network, `SUBDOMAIN_INSTALL` is `false`, and `DOMAIN_CURRENT_SITE` is the host of `local.url`. `bonsai plan` lists those types, so you can decide whether the default is right.
 
 ## Safety
 

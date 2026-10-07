@@ -129,6 +129,9 @@ func TestParseErrors(t *testing.T) {
 		"dependency_depth: -1":                                                    "0 or more",
 		"comments: {per_post: 3}":                                                 "comments",
 		"scrub: {profile: other}":                                                 "scrub.profile",
+		"local: {url: news.local}":                                                "local.url",
+		"local: {sites: {\"2\": \"https://a.local\"}}":                            "needs local.url",
+		"local: {url: \"https://n.local\", sites: {\"1\": \"https://a.local\"}}":  "local.sites.1",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))

@@ -162,6 +162,12 @@ func printReport(r *finish.Report, path string) {
 		}
 		fmt.Println()
 	}
+	if len(r.Local) > 0 {
+		fmt.Println("Local addresses:")
+		for _, l := range r.Local {
+			fmt.Printf("  site %-3d %s -> %s\n", l.BlogID, l.From, l.To)
+		}
+	}
 	passed := 0
 	for _, c := range r.Checks {
 		if c.Status == finish.Pass {

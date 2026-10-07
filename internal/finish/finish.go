@@ -35,6 +35,13 @@ const (
 // users WP Scrubber writes, and the domains it leaves alone by default.
 var scrubbedDomains = []string{"example.com", "example.org", "example.net", "10up.com", "get10up.com"}
 
+// LocalSite is one site's address before and after the URL rewrite.
+type LocalSite struct {
+	BlogID int    `json:"blog_id"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+}
+
 // Status of a check or a whole report.
 const (
 	Pass = "pass"
@@ -61,6 +68,9 @@ type Report struct {
 	Admin       string   `json:"admin_login"`
 	Steps       []string `json:"steps"`
 	Checks      []Check  `json:"checks"`
+	// Local lists each site's production and local address, when the
+	// config sets local.url.
+	Local []LocalSite `json:"local,omitempty"`
 	// AfterImport lists commands to run after importing the dump locally,
 	// with the project's plugins active, to rebuild emptied index tables.
 	AfterImport []string `json:"after_import"`
@@ -217,6 +227,11 @@ func (f *finisher) run(slimPath string) error {
 
 	if err := f.scrubExtras(); err != nil {
 		return err
+	}
+	if f.cfg.Local.URL != "" {
+		if err := f.localize(); err != nil {
+			return err
+		}
 	}
 	if err := f.addAdmin(); err != nil {
 		return err

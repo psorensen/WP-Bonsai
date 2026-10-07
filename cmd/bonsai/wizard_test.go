@@ -142,3 +142,51 @@ func TestOutputNameAndDumpDetection(t *testing.T) {
 		t.Error("yamlKey quoting")
 	}
 }
+
+func TestLocalWizardPieces(t *testing.T) {
+	inv, _ := testInventory(t)
+	sites := prodSites(inv, map[int]bool{1: true, 2: true})
+	if len(sites) != 2 || sites[0].Domain != "example-newspaper.test" || sites[1].Path != "/sports/" {
+		t.Errorf("prodSites = %+v", sites)
+	}
+
+	for _, tc := range []struct {
+		url   string
+		sites map[int]string
+	}{
+		{"https://news.local", nil},
+		{"https://news.local", map[int]string{2: "https://sports.local"}},
+		{"", nil},
+	} {
+		text := "target_size_mb: 10\n" + localYAML(tc.url, tc.sites)
+		cfg, err := config.Parse([]byte(text))
+		if err != nil {
+			t.Fatalf("%v\n%s", err, text)
+		}
+		if cfg.Local.URL != tc.url || len(cfg.LocalOverrides()) != len(tc.sites) {
+			t.Errorf("local = %+v from\n%s", cfg.Local, text)
+		}
+	}
+
+	// A single site takes its address from the home option.
+	var dump bytes.Buffer
+	if _, err := synth.Write(&dump, synth.Options{Seed: 62, Posts: 100}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), index.FileName)
+	if _, err := index.Build(context.Background(), &dump, path, index.Source{}, index.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := index.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	single, err := index.ReadInventory(context.Background(), db)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := prodSites(single, map[int]bool{1: true}); len(s) != 1 || s[0].Domain != "example-newspaper.test" {
+		t.Errorf("single-site prodSites = %+v", s)
+	}
+}

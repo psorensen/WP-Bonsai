@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/psorensen/WP-Bonsai/internal/config"
 	"github.com/psorensen/WP-Bonsai/internal/index"
+	"github.com/psorensen/WP-Bonsai/internal/localurl"
 	"github.com/psorensen/WP-Bonsai/internal/plan"
 )
 
@@ -95,6 +97,11 @@ func wizardCmd(ctx context.Context, dumpPath string) error {
 			if err != nil {
 				return err
 			}
+			if cfg.Local.URL == "" {
+				if cfg, err = addLocalToConfig(ctx, dumpPath, cfg); err != nil {
+					return err
+				}
+			}
 			return runBuild(ctx, buildRun{dump: dumpPath, cfg: cfg, cfgName: wizardConfigFile, work: wizardWorkDir, out: out})
 		}
 	}
@@ -142,12 +149,17 @@ func wizardCmd(ctx context.Context, dumpPath string) error {
 		targetMB = defaultTargetMB
 	}
 
+	localURL, localSites, err := askLocal(inv, kept)
+	if err != nil {
+		return err
+	}
+
 	choices := suggestTypes(inv, kept)
 	for {
 		if err := askTypes(choices); err != nil {
 			return err
 		}
-		text := wizardYAML(dumpPath, targetMB, choices, inv, kept)
+		text := wizardYAML(dumpPath, targetMB, choices, inv, kept) + localYAML(localURL, localSites)
 		cfg, err := config.Parse([]byte(text))
 		if err != nil {
 			return fmt.Errorf("bonsai wrote a config it cannot read; please report this: %w", err)
@@ -472,3 +484,170 @@ func ask(f huh.Field) error {
 }
 
 func accessible() bool { return os.Getenv("BONSAI_ACCESSIBLE") == "1" }
+
+// prodSites lists the production address of every kept site, for the local
+// URL rules. A single site has no wp_blogs row, so its home option is used.
+func prodSites(inv *index.Inventory, kept map[int]bool) []localurl.Site {
+	var out []localurl.Site
+	for _, s := range inv.Sites {
+		if !kept[s.BlogID] {
+			continue
+		}
+		site := localurl.Site{BlogID: s.BlogID, Domain: s.Domain, Path: s.Path}
+		if site.Domain == "" {
+			if u, err := url.Parse(s.Options.Values["home"]); err == nil && u.Host != "" {
+				site.Domain, site.Path = u.Host, u.Path+"/"
+			}
+		}
+		if site.Domain != "" {
+			out = append(out, site)
+		}
+	}
+	return out
+}
+
+// askLocal asks for the local URL of the main site and, on a network,
+// shows every site's local address. It returns the URL, empty to keep
+// production URLs, and any addresses the user changed.
+func askLocal(inv *index.Inventory, kept map[int]bool) (string, map[int]string, error) {
+	sites := prodSites(inv, kept)
+	if len(sites) == 0 {
+		return "", nil, nil
+	}
+	suggested := localurl.Suggest(sites[0].Domain)
+	answer := suggested
+	if err := ask(huh.NewInput().
+		Title(fmt.Sprintf("Local URL of the site (Enter keeps %s)", suggested)).
+		Description("Bonsai rewrites production URLs to local ones, so the dump works in your local environment. Type none to keep production URLs.").
+		Value(&answer).
+		Validate(func(s string) error {
+			s = strings.TrimSpace(s)
+			if s == "" || strings.EqualFold(s, "none") {
+				return nil
+			}
+			_, err := localurl.Parse(s)
+			return err
+		})); err != nil {
+		return "", nil, err
+	}
+	answer = strings.TrimSpace(answer)
+	switch {
+	case strings.EqualFold(answer, "none"):
+		return "", nil, nil
+	case answer == "":
+		answer = suggested
+	}
+	base, _ := localurl.Parse(answer)
+	if len(sites) == 1 {
+		return base, nil, nil
+	}
+
+	targets, err := localurl.Targets(base, sites, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	fmt.Println("\nLocal addresses:")
+	for i, t := range targets {
+		fmt.Printf("  site %-3d %-40s -> %s\n", t.BlogID, sites[i].Domain+sites[i].Path, t.URL)
+	}
+	fmt.Println()
+	useThem := true
+	if err := ask(huh.NewConfirm().Title("Use these local addresses?").
+		Description("Choose No to change them one by one.").Value(&useThem)); err != nil {
+		return "", nil, err
+	}
+	if useThem {
+		return base, nil, nil
+	}
+
+	answers := make([]string, len(targets))
+	var fields []huh.Field
+	for i, t := range targets {
+		if t.BlogID == 1 {
+			continue
+		}
+		answers[i] = t.URL
+		fields = append(fields, huh.NewInput().
+			Title(fmt.Sprintf("Site %d, %s%s (Enter keeps %s)", t.BlogID, sites[i].Domain, sites[i].Path, t.URL)).
+			Value(&answers[i]).
+			Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return nil
+				}
+				_, err := localurl.Parse(s)
+				return err
+			}))
+	}
+	if err := huh.NewForm(huh.NewGroup(fields...).Title("Local addresses")).WithAccessible(accessible()).Run(); err != nil {
+		return "", nil, err
+	}
+	overrides := map[int]string{}
+	for i, t := range targets {
+		if a := strings.TrimSpace(answers[i]); a != "" && a != t.URL {
+			overrides[t.BlogID], _ = localurl.Parse(a)
+		}
+	}
+	if _, err := localurl.Targets(base, sites, overrides); err != nil {
+		return "", nil, err
+	}
+	return base, overrides, nil
+}
+
+// localYAML writes the local section of bonsai.yml.
+func localYAML(localURL string, sites map[int]string) string {
+	if localURL == "" {
+		return "\n# No local section: the dump keeps its production URLs.\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nlocal:\n  url: %s\n", strconv.Quote(localURL))
+	if len(sites) > 0 {
+		ids := make([]int, 0, len(sites))
+		for id := range sites {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		b.WriteString("  sites:\n")
+		for _, id := range ids {
+			fmt.Fprintf(&b, "    \"%d\": %s\n", id, strconv.Quote(sites[id]))
+		}
+	}
+	return b.String()
+}
+
+// addLocalToConfig asks for the local URL when a reused bonsai.yml has
+// none, and appends the answer to the file.
+func addLocalToConfig(ctx context.Context, dumpPath string, cfg *config.Config) (*config.Config, error) {
+	indexPath, err := ensureIndex(ctx, dumpPath, wizardWorkDir)
+	if err != nil {
+		return nil, err
+	}
+	db, err := index.Open(indexPath)
+	if err != nil {
+		return nil, err
+	}
+	inv, err := index.ReadInventory(ctx, db)
+	db.Close()
+	if err != nil {
+		return nil, err
+	}
+	kept := map[int]bool{}
+	for _, s := range inv.Sites {
+		if !cfg.ForSite(s.BlogID).Exclude {
+			kept[s.BlogID] = true
+		}
+	}
+	localURL, sites, err := askLocal(inv, kept)
+	if err != nil || localURL == "" {
+		return cfg, err
+	}
+	text, err := os.ReadFile(wizardConfigFile)
+	if err != nil {
+		return nil, err
+	}
+	text = append(text, []byte(localYAML(localURL, sites))...)
+	if err := os.WriteFile(wizardConfigFile, text, 0o644); err != nil {
+		return nil, err
+	}
+	fmt.Printf("Added the local URL to %s.\n\n", wizardConfigFile)
+	return config.Parse(text)
+}

@@ -69,7 +69,8 @@ func finishDump(t *testing.T, o synth.Options, cfgText string) (*Report, string,
 func TestFinish(t *testing.T) {
 	mariadbtest.Skip(t)
 
-	report, out, err := finishDump(t, synth.Options{Seed: 51, Posts: 600, Subsite: true, Triggers: true}, testConfig)
+	report, out, err := finishDump(t, synth.Options{Seed: 51, Posts: 600, Subsite: true, Triggers: true},
+		testConfig+"local: {url: \"https://example.test\"}\n")
 	if err != nil {
 		t.Fatalf("finish failed: %v\nreport: %+v", err, report)
 	}
@@ -114,6 +115,27 @@ func TestFinish(t *testing.T) {
 			AND meta_key = '%scapabilities' AND meta_value LIKE '%%administrator%%'`, p)); n != "1" {
 			t.Errorf("bonsai is not an administrator of %s", p)
 		}
+	}
+	// Local addresses.
+	if v := q(`SELECT group_concat(concat(blog_id, ' ', domain, path) ORDER BY blog_id SEPARATOR ', ') FROM wp_blogs`); v != "1 example.test/, 2 example.test/sports/" {
+		t.Errorf("wp_blogs = %s", v)
+	}
+	if v := q(`SELECT concat(domain, path) FROM wp_site`); v != "example.test/" {
+		t.Errorf("wp_site = %s", v)
+	}
+	for p, want := range map[string]string{"wp_": "https://example.test", "wp_2_": "https://example.test/sports"} {
+		if v := q(fmt.Sprintf(`SELECT option_value FROM %soptions WHERE option_name = 'home'`, p)); v != want {
+			t.Errorf("%s home = %s, want %s", p, v, want)
+		}
+	}
+	if n := q(`SELECT count(*) FROM wp_posts WHERE post_content LIKE '%example-newspaper.test%'`); n != "0" {
+		t.Errorf("%s posts still link to the production domain", n)
+	}
+	if n := q(`SELECT count(*) FROM wp_posts WHERE guid LIKE '%example-newspaper.test%'`); n == "0" {
+		t.Error("guid was rewritten; it must keep the production address")
+	}
+	if len(report.Local) != 2 || report.Local[1].To != "https://example.test/sports" {
+		t.Errorf("report.Local = %+v", report.Local)
 	}
 	if n := q(`SELECT (SELECT count(*) FROM wp_comments) + (SELECT count(*) FROM wp_commentmeta)`); n != "0" {
 		t.Errorf("%s comment rows remain", n)

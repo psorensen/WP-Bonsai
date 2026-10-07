@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/psorensen/WP-Bonsai/internal/localurl"
 )
 
 // Modes for a post type.
@@ -46,6 +48,7 @@ type Config struct {
 	Users           Users                `yaml:"users"`
 	Meta            Meta                 `yaml:"meta"`
 	Options         Options              `yaml:"options"`
+	Local           Local                `yaml:"local"`
 	Tables          map[string]TableRule `yaml:"tables"`
 	References      References           `yaml:"references"`
 	Scrub           Scrub                `yaml:"scrub"`
@@ -151,6 +154,16 @@ type Taxonomies struct {
 
 type Users struct {
 	IncludeRoles []string `yaml:"include_roles"`
+}
+
+// Local rewrites production URLs for a local environment. With no URL, the
+// output keeps its production URLs.
+type Local struct {
+	// URL is the main site's local address, such as https://news.local.
+	URL string `yaml:"url"`
+	// Sites sets the local address of other sites of a network, by blog
+	// ID. Sites not listed get one derived from their production address.
+	Sites map[string]string `yaml:"sites"`
 }
 
 // Options filters the options table of every kept site.
@@ -406,6 +419,20 @@ func (c *Config) check() error {
 	if c.Scrub.Profile != "fueled-default" {
 		bad("scrub.profile: %q is not a known profile; use fueled-default", c.Scrub.Profile)
 	}
+	if c.Local.URL != "" {
+		if _, err := localurl.Parse(c.Local.URL); err != nil {
+			bad("local.url: %v", err)
+		}
+	} else if len(c.Local.Sites) > 0 {
+		bad("local.sites needs local.url")
+	}
+	for _, key := range sortedKeys(c.Local.Sites) {
+		if n, err := strconv.Atoi(key); err != nil || n < 2 {
+			bad("local.sites.%s: the key must be the blog ID of a subsite", key)
+		} else if _, err := localurl.Parse(c.Local.Sites[key]); err != nil {
+			bad("local.sites.%s: %v", key, err)
+		}
+	}
 	if *c.Taxonomies.PruneUnusedFlatTermsOver < 0 {
 		bad("taxonomies.prune_unused_flat_terms_over: must be 0 or more")
 	}
@@ -465,4 +492,15 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// LocalOverrides returns local.sites by blog ID.
+func (c *Config) LocalOverrides() map[int]string {
+	out := map[int]string{}
+	for k, v := range c.Local.Sites {
+		if n, err := strconv.Atoi(k); err == nil {
+			out[n] = v
+		}
+	}
+	return out
 }
