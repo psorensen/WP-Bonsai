@@ -69,7 +69,7 @@ var library = []libraryRule{
 	{"wc_rate_limits", config.TableEmpty, "woocommerce", ""},
 	{"wc_download_log", config.TableEmpty, "woocommerce", "personal data"},
 	{"woocommerce_sessions", config.TableEmpty, "woocommerce", "personal data"},
-	{"gf_form_view", config.TableEmpty, "gravityforms", ""},
+	{"gf_form_view", config.TableEmpty, "gravityforms", "IP addresses"},
 
 	// Personal data.
 	{"wc_orders", config.TableEmpty, "woocommerce", "personal data"},
@@ -88,6 +88,11 @@ var library = []libraryRule{
 	{"gf_entry_notes", config.TableEmpty, "gravityforms", "personal data"},
 	{"gf_draft_submissions", config.TableEmpty, "gravityforms", "personal data"},
 	{"rg_lead*", config.TableEmpty, "gravityforms", "personal data"},
+	// Gravity Forms tables from before version 2.3, named rg_ instead of gf_.
+	{"rg_incomplete_submissions", config.TableEmpty, "gravityforms", "personal data"},
+	{"rg_form_view", config.TableEmpty, "gravityforms", "IP addresses"},
+	{"rg_form", config.TableKeep, "gravityforms", ""},
+	{"rg_form_meta", config.TableKeep, "gravityforms", ""},
 	{"mailpoet_subscriber*", config.TableEmpty, "mailpoet", "personal data"},
 	{"newsletter", config.TableEmpty, "newsletter", "personal data"},
 	{"newsletter_*", config.TableEmpty, "newsletter", "personal data"},

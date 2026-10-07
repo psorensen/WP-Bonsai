@@ -29,8 +29,17 @@ import (
 // FileName is the name of the index file inside a work directory.
 const FileName = "index.duckdb"
 
-// memoryLimit caps the memory DuckDB uses while building the index.
-const memoryLimit = "1GB"
+// MemoryLimit returns the cap on the memory DuckDB may use, from
+// BONSAI_DUCKDB_MEMORY, such as 1GB. The default is 256MB: on a 27 GB dump
+// with 91 million rows, pass 1 took the same time with 256MB as with 1GB,
+// and its peak memory fell from 1.7 GB to 0.7 GB. DuckDB writes to disk
+// when it needs more.
+func MemoryLimit() string {
+	if v := os.Getenv("BONSAI_DUCKDB_MEMORY"); v != "" {
+		return v
+	}
+	return "256MB"
+}
 
 // Source describes the dump an index was built from.
 type Source struct {
@@ -123,7 +132,7 @@ func Build(ctx context.Context, r io.Reader, dbPath string, src Source, opts Opt
 	}
 	// Cap DuckDB's memory so pass 1 stays flat on any dump size. DuckDB
 	// writes to disk when it needs more.
-	connector, err := duckdb.NewConnector(dbPath+"?memory_limit="+memoryLimit, nil)
+	connector, err := duckdb.NewConnector(dbPath+"?memory_limit="+MemoryLimit(), nil)
 	if err != nil {
 		return nil, err
 	}

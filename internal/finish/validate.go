@@ -142,7 +142,7 @@ func (f *finisher) piiChecks() {
 		f.report.add(Check{Name: "no email or IP addresses outside the allowed patterns", Status: Fail, Detail: err.Error()})
 		return
 	}
-	var emailQ, ipQ []string
+	var emailQ, ipQ []part
 	for _, line := range strings.Split(cols, "\n") {
 		table, col, ok := strings.Cut(line, "\t")
 		if !ok {
@@ -150,11 +150,11 @@ func (f *finisher) piiChecks() {
 		}
 		c := "`" + col + "`"
 		if strings.Contains(strings.ToLower(col), "email") {
-			emailQ = append(emailQ, fmt.Sprintf("(SELECT count(*) FROM `%s` WHERE %s)", table, notAllowed(c)))
+			emailQ = append(emailQ, part{table + "." + col, fmt.Sprintf("SELECT count(*) FROM `%s` WHERE %s", table, notAllowed(c))})
 		} else {
-			ipQ = append(ipQ, fmt.Sprintf(`(SELECT count(*) FROM `+"`%s`"+` WHERE %[2]s REGEXP '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$|:'
+			ipQ = append(ipQ, part{table + "." + col, fmt.Sprintf(`SELECT count(*) FROM `+"`%s`"+` WHERE %[2]s REGEXP '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$|:'
 				AND %[2]s NOT IN ('127.0.0.1', '::1', '0.0.0.0')
-				AND %[2]s NOT LIKE '192.0.2.%%' AND %[2]s NOT LIKE '198.51.100.%%' AND %[2]s NOT LIKE '203.0.113.%%')`, table, c))
+				AND %[2]s NOT LIKE '192.0.2.%%' AND %[2]s NOT LIKE '198.51.100.%%' AND %[2]s NOT LIKE '203.0.113.%%'`, table, c)})
 		}
 	}
 	// Admin email options of every site and of the network.
@@ -162,31 +162,58 @@ func (f *finisher) piiChecks() {
 		if !f.has(s.Prefix + "options") {
 			continue
 		}
-		emailQ = append(emailQ, fmt.Sprintf("(SELECT count(*) FROM %soptions WHERE option_name IN ('admin_email', 'new_admin_email') AND %s)", s.Prefix, notAllowed("option_value")))
+		emailQ = append(emailQ, part{s.Prefix + "options.admin_email", fmt.Sprintf("SELECT count(*) FROM %soptions WHERE option_name IN ('admin_email', 'new_admin_email') AND %s", s.Prefix, notAllowed("option_value"))})
 	}
 	if f.multisite {
-		emailQ = append(emailQ, fmt.Sprintf("(SELECT count(*) FROM %ssitemeta WHERE meta_key IN ('admin_email', 'new_admin_email') AND %s)", f.prefix, notAllowed("meta_value")))
+		emailQ = append(emailQ, part{f.prefix + "sitemeta.admin_email", fmt.Sprintf("SELECT count(*) FROM %ssitemeta WHERE meta_key IN ('admin_email', 'new_admin_email') AND %s", f.prefix, notAllowed("meta_value"))})
 	}
-	sum := func(parts []string) string {
-		if len(parts) == 0 {
-			return "SELECT 0"
-		}
-		return "SELECT " + strings.Join(parts, " + ")
-	}
-	f.check("no email addresses outside the allowed patterns", 0, Fail,
-		"user or admin email addresses that were not scrubbed; allow them under scrub.allowed_domains if they are staff", sum(emailQ))
-	f.check("no IP addresses outside the allowed patterns", 0, Fail, "IP addresses that were not scrubbed", sum(ipQ))
+	f.breakdown("no email addresses outside the allowed patterns", Fail,
+		"email addresses that were not scrubbed; empty the table under tables:, or allow staff domains under scrub.allowed_domains", emailQ)
+	f.breakdown("no IP addresses outside the allowed patterns", Fail,
+		"IP addresses that were not scrubbed; empty the table under tables:", ipQ)
 
 	// Post content is public, so addresses in it are reported, not failed.
-	var contentQ []string
+	var contentQ []part
 	for _, s := range f.sites {
 		if !f.has(s.Prefix + "posts") {
 			continue
 		}
-		contentQ = append(contentQ, fmt.Sprintf(`(SELECT count(*) FROM %sposts WHERE post_content REGEXP '[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}')`, s.Prefix))
+		// LIKE first, and bounded repeats: an unbounded pattern backtracks
+		// quadratically over long runs such as base64 images in content.
+		contentQ = append(contentQ, part{s.Prefix + "posts.post_content", fmt.Sprintf(`SELECT count(*) FROM %sposts WHERE post_content LIKE '%%@%%'
+			AND post_content REGEXP '[A-Za-z0-9._%%+-]{1,64}@[A-Za-z0-9-]{1,63}(\\.[A-Za-z0-9-]{1,63}){0,8}\\.[A-Za-z]{2,24}'`, s.Prefix)})
 	}
-	f.check("email addresses in post content", 0, Warn,
-		"posts whose content mentions an email address; post content is public and is not changed", sum(contentQ))
+	f.breakdown("email addresses in post content", Warn,
+		"posts whose content mentions an email address; post content is public and is not changed", contentQ)
+}
+
+// part is one counted place, such as a table column.
+type part struct {
+	label string
+	query string // returns one count
+}
+
+// breakdown runs one count per part and adds a check whose detail names
+// every part with a nonzero count. It reports counts only, never values.
+func (f *finisher) breakdown(name, status, detail string, parts []part) {
+	var total int64
+	var hits []string
+	for _, p := range parts {
+		n, err := f.count(p.query)
+		if err != nil {
+			f.report.add(Check{Name: name, Status: Fail, Detail: p.label + ": " + err.Error()})
+			return
+		}
+		if n > 0 {
+			total += n
+			hits = append(hits, fmt.Sprintf("%s %d", p.label, n))
+		}
+	}
+	c := Check{Name: name, Status: statusIf(total > 0, status), Count: total}
+	if total > 0 {
+		c.Detail = detail + ". Found in: " + strings.Join(hits, ", ")
+	}
+	f.report.add(c)
 }
 
 // planChecks are the checks that need the index: per-term archives,

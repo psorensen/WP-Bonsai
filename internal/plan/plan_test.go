@@ -371,6 +371,28 @@ func TestOrphanSiteDropped(t *testing.T) {
 	}
 }
 
+func TestLibraryRules(t *testing.T) {
+	r := newResolver(config.Default(), "wp_", map[int]string{1: "wp_", 11: "wp_11_"}, map[int]bool{})
+	for name, want := range map[string]string{
+		"wp_11_rg_incomplete_submissions": config.TableEmpty,
+		"wp_11_rg_form_view":              config.TableEmpty,
+		"wp_11_rg_lead_detail":            config.TableEmpty,
+		"wp_11_rg_form":                   config.TableKeep,
+		"wp_gf_entry":                     config.TableEmpty,
+		"wp_yoast_indexable":              config.TableEmpty,
+		"wp_yoast_migrations":             config.TableKeep,
+	} {
+		site := 1
+		if strings.HasPrefix(name, "wp_11_") {
+			site = 11
+		}
+		rule, err := r.resolve(tableInfo{name: name, site: site, rowBytes: 10})
+		if err != nil || rule.Action != want || !strings.HasPrefix(rule.Source, "library:") {
+			t.Errorf("%s: rule %+v, %v; want %s from the library", name, rule, err, want)
+		}
+	}
+}
+
 func TestGlobToLike(t *testing.T) {
 	for glob, want := range map[string]string{
 		"_oembed_*":  `\_oembed\_%`,

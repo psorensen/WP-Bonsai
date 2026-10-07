@@ -12,6 +12,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -38,7 +40,8 @@ type Plan struct {
 	Rules   map[string]Rule     `json:"-"`
 	Columns map[string][]string `json:"-"`
 
-	db *sql.DB
+	db  *sql.DB
+	tmp string // DuckDB spill directory
 }
 
 // SitePlan is the outcome for one site.
@@ -121,24 +124,35 @@ const schemaOverheadBytes = 400
 
 // Build makes a plan from an index and a config. Close the plan when done.
 func Build(ctx context.Context, indexPath string, cfg *config.Config) (*Plan, error) {
-	db, err := sql.Open("duckdb", "")
+	// The plan joins large index tables, so DuckDB gets the same memory
+	// cap as pass 1 and a private directory to spill to.
+	tmp, err := os.MkdirTemp("", "bonsai-plan-")
 	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("duckdb", "?memory_limit="+index.MemoryLimit()+"&temp_directory="+url.QueryEscape(tmp))
+	if err != nil {
+		os.RemoveAll(tmp)
 		return nil, err
 	}
 	// One connection, so every statement sees the attached index and the
 	// keep tables.
 	db.SetMaxOpenConns(1)
-	p := &Plan{db: db, TargetBytes: int64(cfg.TargetSizeMB * (1 << 20)), Warnings: []string{}}
+	p := &Plan{db: db, tmp: tmp, TargetBytes: int64(cfg.TargetSizeMB * (1 << 20)), Warnings: []string{}}
 	b := &builder{ctx: ctx, db: db, cfg: cfg, p: p}
 	if err := b.run(indexPath); err != nil {
-		db.Close()
+		p.Close()
 		return nil, err
 	}
 	return p, nil
 }
 
-// Close releases the plan's database.
-func (p *Plan) Close() error { return p.db.Close() }
+// Close releases the plan's database and its spill directory.
+func (p *Plan) Close() error {
+	err := p.db.Close()
+	os.RemoveAll(p.tmp)
+	return err
+}
 
 // DB returns the database holding the keep tables, for pass 2.
 func (p *Plan) DB() *sql.DB { return p.db }
