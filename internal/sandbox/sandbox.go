@@ -29,14 +29,19 @@ const (
 	scrubberVersion = "1.0.3" // github.com/10up/wp-scrubber tag
 )
 
+// WPPath is where WordPress lives in the WP-CLI image. The base image
+// declares /var/www/html a volume, and the legacy Docker builder drops
+// whatever a RUN step writes there, so WordPress goes somewhere else.
+const WPPath = "/srv/wordpress"
+
 // dockerfile builds the WP-CLI image: WordPress core plus WP Scrubber,
 // loaded as a must-use plugin so nothing has to be activated in the
 // database. Building it is the only step that needs the internet.
 var dockerfile = `FROM ` + cliBaseImage + `
 USER root
-RUN mkdir -p /var/www/html/wp-content/mu-plugins && chown -R www-data:www-data /var/www/html
+RUN mkdir -p ` + WPPath + ` && chown www-data:www-data ` + WPPath + `
 USER www-data
-WORKDIR /var/www/html
+WORKDIR ` + WPPath + `
 RUN wp core download --skip-content && mkdir -p wp-content/mu-plugins wp-content/plugins wp-content/themes
 RUN wget -qO- https://github.com/10up/wp-scrubber/archive/refs/tags/` + scrubberVersion + `.tar.gz \
 	| tar xz -C wp-content/mu-plugins \
