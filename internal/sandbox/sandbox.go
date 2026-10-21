@@ -170,15 +170,29 @@ func (s *Sandbox) WP(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimRight(out.String(), "\n"), nil
 }
 
-// Export writes a dump of the wordpress database.
+// Export writes a dump of the wordpress database that imports into MySQL
+// as well as MariaDB.
 func (s *Sandbox) Export(ctx context.Context, w io.Writer) error {
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", "exec", s.db, "mariadb-dump", "-uroot",
 		"--single-transaction", "--routines", "--triggers", "--skip-dump-date", "wordpress")
-	cmd.Stdout = w
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("sandbox: export failed: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("sandbox: export failed: %w", err)
+	}
+	copyErr := writePortable(w, stdout)
+	if copyErr != nil {
+		io.Copy(io.Discard, stdout)
+	}
+	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("sandbox: export failed: %w: %s", err, dbErrors(stderr.String()))
+	}
+	if copyErr != nil {
+		return fmt.Errorf("sandbox: export failed: %w", copyErr)
 	}
 	return nil
 }
