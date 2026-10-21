@@ -183,7 +183,7 @@ func (f *finisher) count(q string) (int64, error) {
 }
 
 func (f *finisher) wp(args ...string) (string, error) {
-	return f.sb.WP(f.ctx, append(args, "--path=/var/www/html")...)
+	return f.sb.WP(f.ctx, append(args, "--path="+sandbox.WPPath)...)
 }
 
 // wpSite runs a WP-CLI command against one site of a network.
