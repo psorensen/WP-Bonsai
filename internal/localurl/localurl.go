@@ -12,7 +12,6 @@
 package localurl
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -125,6 +124,7 @@ type Replacement struct {
 // longest first, so www.example.com/elections is replaced before
 // www.example.com. sources maps each blog ID to its production addresses,
 // such as the wp_blogs entry and the home option, with or without scheme.
+// A dump that already uses the local addresses has no pairs.
 func Replacements(targets []Target, sources map[int][]string) ([]Replacement, error) {
 	seen := map[string]string{}
 	for _, t := range targets {
@@ -139,9 +139,6 @@ func Replacements(targets []Target, sources map[int][]string) ([]Replacement, er
 			}
 			seen[from] = to
 		}
-	}
-	if len(seen) == 0 {
-		return nil, errors.New("no production addresses to replace")
 	}
 	out := make([]Replacement, 0, len(seen))
 	for from, to := range seen {
