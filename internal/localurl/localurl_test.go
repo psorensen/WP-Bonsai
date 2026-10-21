@@ -82,4 +82,11 @@ func TestReplacements(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Replacements = %v, want %v", got, want)
 	}
+
+	local, err := Replacements(targets, map[int][]string{
+		1: {"news.local/", "https://news.local"},
+	})
+	if err != nil || len(local) != 0 {
+		t.Errorf("Replacements on a local dump = %v, %v, want no pairs", local, err)
+	}
 }
